@@ -786,6 +786,16 @@ exports.updateUser = async (req, res) => {
     if (req.file?.filename) {
       if (user.profile_image) deleteProfileFile(user.profile_image);
       patch.profile_image = req.file.filename;
+    } else {
+      const removeImage =
+        req.body.remove_profile_image === true ||
+        req.body.remove_profile_image === "true" ||
+        req.body.profile_image === "" ||
+        req.body.profile_image === "null";
+      if (removeImage) {
+        if (user.profile_image) deleteProfileFile(user.profile_image);
+        patch.profile_image = null;
+      }
     }
 
     if (patch.is_public !== undefined) {
