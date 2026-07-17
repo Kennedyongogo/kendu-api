@@ -40,6 +40,21 @@ module.exports = (sequelize) => {
         allowNull: true,
         unique: true,
       },
+      programme_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: "Programme the student is enrolled in",
+      },
+      year_of_study: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        comment: "Student year of study (e.g. 1, 2, 3)",
+      },
+      semester: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        comment: "Current semester (1 or 2)",
+      },
       profile_image: {
         type: DataTypes.STRING(255),
         allowNull: true,

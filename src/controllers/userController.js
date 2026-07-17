@@ -5,7 +5,7 @@ const fs = require("fs");
 const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
 const { QueryTypes, Op, fn, col, where: sqlWhere } = require("sequelize");
-const { User, sequelize } = require("../models");
+const { User, Programme, sequelize } = require("../models");
 const config = require("../config/config");
 const { logFromRequest, getIpAddress } = require("../middleware/auditLogger");
 const {
@@ -77,6 +77,118 @@ function studentAdmissionRequired(role, admissionNumber) {
   return role === "student" && !normalizeAdmissionNumber(admissionNumber);
 }
 
+const DEFAULT_STUDENT_PASSWORD = "123456";
+
+const STUDENT_IMPORT_FIELDS = [
+  { key: "email", label: "Email", required: true },
+  { key: "full_name", label: "Full name", required: true },
+  { key: "admission_number", label: "Admission number", required: true },
+  { key: "phone", label: "Phone", required: false },
+  { key: "password", label: "Password", required: false },
+  { key: "programme", label: "Programme", required: false },
+  { key: "year_of_study", label: "Year of study", required: false },
+  { key: "semester", label: "Semester", required: false },
+];
+
+const programmeInclude = {
+  model: Programme,
+  as: "programme",
+  attributes: ["id", "name", "award", "category", "mode"],
+  required: false,
+};
+
+function parseYearOfStudy(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const n = parseInt(String(value).replace(/[^0-9]/g, ""), 10);
+  if (!Number.isFinite(n) || n < 1 || n > 10) return null;
+  return n;
+}
+
+function parseSemester(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const s = String(value).trim().toLowerCase();
+  if (["1", "sem 1", "semester 1", "sem1", "s1"].includes(s)) return 1;
+  if (["2", "sem 2", "semester 2", "sem2", "s2"].includes(s)) return 2;
+  const n = parseInt(s.replace(/[^0-9]/g, ""), 10);
+  if (n === 1 || n === 2) return n;
+  return null;
+}
+
+async function resolveProgrammeId(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const raw = String(value).trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+    const byId = await Programme.findByPk(raw);
+    return byId ? byId.id : null;
+  }
+  const byName = await Programme.findOne({
+    where: sqlWhere(fn("LOWER", col("name")), raw.toLowerCase()),
+  });
+  return byName ? byName.id : null;
+}
+
+function studentEnrolmentError(role, { programme_id, year_of_study, semester }) {
+  if (role !== "student") return null;
+  if (!programme_id) return "programme is required for student users";
+  if (year_of_study == null) return "year of study is required for student users";
+  if (semester == null) return "semester is required for student users (1 or 2)";
+  return null;
+}
+
+function readExcelMatrix(buffer) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    const err = new Error("Workbook has no sheets");
+    err.status = 400;
+    throw err;
+  }
+  const ws = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+  if (!matrix.length) {
+    const err = new Error("Sheet is empty");
+    err.status = 400;
+    throw err;
+  }
+  return { sheetName, matrix };
+}
+
+function expandAliases() {
+  return {
+    email_address: "email",
+    mail: "email",
+    full_name: "full_name",
+    name: "full_name",
+    fullname: "full_name",
+    pass: "password",
+    pwd: "password",
+    mobile: "phone",
+    cellphone: "phone",
+    tel: "phone",
+    telephone: "phone",
+    admission_no: "admission_number",
+    admission: "admission_number",
+    reg_no: "admission_number",
+    students: "student",
+    programme_id: "programme",
+    programme_name: "programme",
+    program: "programme",
+    course: "programme",
+    year: "year_of_study",
+    year_of_study: "year_of_study",
+    study_year: "year_of_study",
+    sem: "semester",
+    semester: "semester",
+  };
+}
+
+function normalizeExcelHeader(cell) {
+  if (cell == null || String(cell).trim() === "") return null;
+  let key = String(cell).trim().toLowerCase().replace(/\s+/g, "_");
+  const aliases = expandAliases();
+  return aliases[key] || key;
+}
+
 const sanitizeUser = (user) => {
   const plain = user.get ? user.get({ plain: true }) : { ...user };
   delete plain.password_hash;
@@ -100,29 +212,6 @@ const signToken = (user) =>
 const PUBLIC_REGISTER_ROLES = ["student"];
 
 const MAX_IMPORT_ROWS = 500;
-
-function normalizeExcelHeader(cell) {
-  if (cell == null || String(cell).trim() === "") return null;
-  let key = String(cell).trim().toLowerCase().replace(/\s+/g, "_");
-  const aliases = {
-    email_address: "email",
-    mail: "email",
-    full_name: "full_name",
-    name: "full_name",
-    fullname: "full_name",
-    pass: "password",
-    pwd: "password",
-    mobile: "phone",
-    cellphone: "phone",
-    tel: "phone",
-    telephone: "phone",
-    admission_no: "admission_number",
-    admission: "admission_number",
-    reg_no: "admission_number",
-    students: "student",
-  };
-  return aliases[key] || key;
-}
 
 function trimCell(v) {
   if (v == null || v === "") return "";
@@ -355,6 +444,278 @@ exports.importUsersExcel = async (req, res) => {
   }
 };
 
+/** Preview Excel headers + sample rows for column mapping UI */
+exports.previewImportExcel = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const rawHeaders = matrix[0].map((h, index) => ({
+      index,
+      header: trimCell(h) || `Column ${index + 1}`,
+      suggested: normalizeExcelHeader(h),
+    }));
+
+    const dataRowCount = matrix.slice(1).filter((row) =>
+      row.some((cell) => trimCell(cell) !== "")
+    ).length;
+
+    const sample = [];
+    for (let i = 1; i < matrix.length && sample.length < 5; i++) {
+      const row = matrix[i];
+      if (!row.some((cell) => trimCell(cell) !== "")) continue;
+      const obj = {};
+      rawHeaders.forEach((col) => {
+        obj[col.header] = trimCell(row[col.index]);
+      });
+      sample.push(obj);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        columns: rawHeaders,
+        sample,
+        row_count: dataRowCount,
+        system_fields: STUDENT_IMPORT_FIELDS,
+        default_password: DEFAULT_STUDENT_PASSWORD,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Import students with explicit column mapping.
+ * mapping: { email: "Email", full_name: "Name", ... } (system field -> Excel header)
+ * defaults: { programme_id, year_of_study, semester, password }
+ */
+exports.importUsersMapped = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let mapping = {};
+    let defaults = {};
+    try {
+      mapping =
+        typeof req.body.mapping === "string"
+          ? JSON.parse(req.body.mapping || "{}")
+          : req.body.mapping || {};
+      defaults =
+        typeof req.body.defaults === "string"
+          ? JSON.parse(req.body.defaults || "{}")
+          : req.body.defaults || {};
+    } catch {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mapping or defaults JSON",
+      });
+    }
+
+    const requiredMapped = ["email", "full_name", "admission_number"];
+    const missingMap = requiredMapped.filter((k) => !mapping[k]);
+    if (missingMap.length) {
+      return res.status(400).json({
+        success: false,
+        message: `Map required columns: ${missingMap.join(", ")}`,
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const headerRow = matrix[0].map((h, index) => ({
+      index,
+      header: trimCell(h) || `Column ${index + 1}`,
+    }));
+    const headerIndex = new Map(headerRow.map((h) => [h.header, h.index]));
+
+    const defaultPassword =
+      trimCell(defaults.password) || DEFAULT_STUDENT_PASSWORD;
+    const defaultProgrammeId = await resolveProgrammeId(defaults.programme_id);
+    const defaultYear = parseYearOfStudy(defaults.year_of_study);
+    const defaultSemester = parseSemester(defaults.semester);
+
+    const dataRows = [];
+    for (let i = 1; i < matrix.length; i++) {
+      const row = matrix[i];
+      const excelRow = i + 1;
+      const get = (systemKey) => {
+        const header = mapping[systemKey];
+        if (!header) return "";
+        const idx = headerIndex.get(header);
+        if (idx === undefined) return "";
+        return trimCell(row[idx]);
+      };
+
+      const email = get("email");
+      const full_name = get("full_name");
+      const admission_number = get("admission_number");
+      const phone = get("phone");
+      const password = get("password") || defaultPassword;
+      const programmeValue = get("programme");
+      const yearValue = get("year_of_study");
+      const semesterValue = get("semester");
+
+      if (!email && !full_name && !admission_number && !phone) continue;
+
+      dataRows.push({
+        excelRow,
+        email,
+        full_name,
+        admission_number,
+        phone,
+        password,
+        programmeValue,
+        yearValue,
+        semesterValue,
+      });
+    }
+
+    if (!dataRows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No data rows found below the header row",
+      });
+    }
+    if (dataRows.length > MAX_IMPORT_ROWS) {
+      return res.status(400).json({
+        success: false,
+        message: `Too many rows (${dataRows.length}). Maximum per upload is ${MAX_IMPORT_ROWS}.`,
+      });
+    }
+
+    const errors = [];
+    const created = [];
+    const seenEmail = new Set();
+    const seenAdmission = new Set();
+
+    for (const row of dataRows) {
+      const {
+        excelRow,
+        email,
+        full_name,
+        admission_number,
+        phone,
+        password,
+        programmeValue,
+        yearValue,
+        semesterValue,
+      } = row;
+
+      if (!email || !full_name || !admission_number) {
+        errors.push({
+          row: excelRow,
+          message: "email, full_name, and admission_number are required",
+        });
+        continue;
+      }
+
+      const programme_id =
+        (await resolveProgrammeId(programmeValue)) || defaultProgrammeId;
+      const year_of_study = parseYearOfStudy(yearValue) ?? defaultYear;
+      const semester = parseSemester(semesterValue) ?? defaultSemester;
+
+      const enrolErr = studentEnrolmentError("student", {
+        programme_id,
+        year_of_study,
+        semester,
+      });
+      if (enrolErr) {
+        errors.push({ row: excelRow, message: enrolErr });
+        continue;
+      }
+
+      const emailLc = normalizeEmail(email);
+      const admissionNorm = normalizeAdmissionNumber(admission_number);
+      if (seenEmail.has(emailLc) || (admissionNorm && seenAdmission.has(admissionNorm))) {
+        errors.push({
+          row: excelRow,
+          message: "Duplicate email or admission number within this file",
+        });
+        continue;
+      }
+      seenEmail.add(emailLc);
+      if (admissionNorm) seenAdmission.add(admissionNorm);
+
+      try {
+        const exists = await User.findOne({
+          where: duplicateUserWhere(email, admission_number),
+        });
+        if (exists) {
+          errors.push({
+            row: excelRow,
+            message: "Email or admission number already exists in database",
+          });
+          continue;
+        }
+
+        const password_hash = await bcrypt.hash(password || DEFAULT_STUDENT_PASSWORD, 10);
+        const user = await User.create({
+          email: emailLc,
+          password_hash,
+          role: "student",
+          full_name,
+          phone: phone || null,
+          admission_number: admissionNorm || null,
+          programme_id,
+          year_of_study,
+          semester,
+          profile_image: null,
+          is_public: false,
+          position: null,
+        });
+        created.push(sanitizeUser(user));
+      } catch (err) {
+        errors.push({
+          row: excelRow,
+          message: err.message || "Could not create user",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        createdCount: created.length,
+        errorCount: errors.length,
+        created,
+        errors,
+        default_password: DEFAULT_STUDENT_PASSWORD,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.login = async (req, res) => {
   try {
     const { email, admission_number, password } = req.body;
@@ -550,9 +911,11 @@ exports.listUsers = async (req, res) => {
     const { count, rows } = await User.findAndCountAll({
       where,
       attributes: { exclude: ["password_hash"] },
+      include: [programmeInclude],
       order: [["created_at", "DESC"]],
       limit,
       offset,
+      distinct: true,
     });
 
     return res.json({
@@ -606,6 +969,7 @@ exports.getUserById = async (req, res) => {
     }
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password_hash"] },
+      include: [programmeInclude],
     });
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
@@ -628,6 +992,10 @@ exports.createUser = async (req, res) => {
       role,
       profile_image,
       is_public,
+      programme_id: programmeIdRaw,
+      programme,
+      year_of_study: yearRaw,
+      semester: semesterRaw,
     } = req.body;
     const normalizedRole = normalizeRole(role);
 
@@ -657,6 +1025,24 @@ exports.createUser = async (req, res) => {
         success: false,
         message: "admission_number is required for student users",
       });
+    }
+
+    let programme_id = null;
+    let year_of_study = null;
+    let semester = null;
+
+    if (normalizedRole === "student") {
+      programme_id = await resolveProgrammeId(programmeIdRaw || programme);
+      year_of_study = parseYearOfStudy(yearRaw);
+      semester = parseSemester(semesterRaw);
+      const enrolErr = studentEnrolmentError(normalizedRole, {
+        programme_id,
+        year_of_study,
+        semester,
+      });
+      if (enrolErr) {
+        return res.status(400).json({ success: false, message: enrolErr });
+      }
     }
 
     const exists = await User.findOne({
@@ -690,6 +1076,9 @@ exports.createUser = async (req, res) => {
         normalizedRole === "student"
           ? normalizeAdmissionNumber(admission_number) || null
           : null,
+      programme_id: normalizedRole === "student" ? programme_id : null,
+      year_of_study: normalizedRole === "student" ? year_of_study : null,
+      semester: normalizedRole === "student" ? semester : null,
       profile_image: imageFilename,
       is_public:
         normalizedRole === "student"
@@ -697,7 +1086,12 @@ exports.createUser = async (req, res) => {
           : is_public === true || is_public === "true",
     });
 
-    return res.status(201).json({ success: true, data: sanitizeUser(user) });
+    const full = await User.findByPk(user.id, {
+      attributes: { exclude: ["password_hash"] },
+      include: [programmeInclude],
+    });
+
+    return res.status(201).json({ success: true, data: sanitizeUser(full) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -727,10 +1121,26 @@ exports.updateUser = async (req, res) => {
       "admission_number",
       "role",
       "is_public",
+      "programme_id",
+      "year_of_study",
+      "semester",
     ];
     const patch = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) patch[key] = req.body[key];
+    }
+
+    if (req.body.programme !== undefined && req.body.programme_id === undefined) {
+      patch.programme_id = await resolveProgrammeId(req.body.programme);
+    } else if (patch.programme_id !== undefined) {
+      patch.programme_id = (await resolveProgrammeId(patch.programme_id)) || null;
+    }
+
+    if (patch.year_of_study !== undefined) {
+      patch.year_of_study = parseYearOfStudy(patch.year_of_study);
+    }
+    if (patch.semester !== undefined) {
+      patch.semester = parseSemester(patch.semester);
     }
 
     if (req.body.role !== undefined) {
@@ -768,8 +1178,24 @@ exports.updateUser = async (req, res) => {
     if (patch.email !== undefined) patch.email = normalizeEmail(patch.email);
     if (effectiveRole !== "student") {
       patch.admission_number = null;
+      patch.programme_id = null;
+      patch.year_of_study = null;
+      patch.semester = null;
     } else if (patch.admission_number !== undefined) {
       patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
+    }
+
+    if (effectiveRole === "student") {
+      const enrolErr = studentEnrolmentError(effectiveRole, {
+        programme_id:
+          patch.programme_id !== undefined ? patch.programme_id : user.programme_id,
+        year_of_study:
+          patch.year_of_study !== undefined ? patch.year_of_study : user.year_of_study,
+        semester: patch.semester !== undefined ? patch.semester : user.semester,
+      });
+      if (enrolErr) {
+        return res.status(400).json({ success: false, message: enrolErr });
+      }
     }
 
     if (patch.position !== undefined) {
@@ -808,7 +1234,11 @@ exports.updateUser = async (req, res) => {
     }
 
     await user.update(patch);
-    return res.json({ success: true, data: sanitizeUser(user) });
+    const full = await User.findByPk(user.id, {
+      attributes: { exclude: ["password_hash"] },
+      include: [programmeInclude],
+    });
+    return res.json({ success: true, data: sanitizeUser(full) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

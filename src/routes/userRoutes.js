@@ -16,6 +16,8 @@ const {
   deleteUser,
   downloadImportTemplate,
   importUsersExcel,
+  previewImportExcel,
+  importUsersMapped,
 } = require("../controllers/userController");
 const { authenticateUser, authorizeRoles } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
@@ -84,6 +86,20 @@ router.post(
   authorizeRoles(ADMIN_PORTAL_API_ROLES),
   excelUpload.single("file"),
   importUsersExcel
+);
+router.post(
+  "/import-preview",
+  authenticateUser,
+  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  excelUpload.single("file"),
+  previewImportExcel
+);
+router.post(
+  "/import-mapped",
+  authenticateUser,
+  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  excelUpload.single("file"),
+  importUsersMapped
 );
 
 router.get("/:id", authenticateUser, getUserById);

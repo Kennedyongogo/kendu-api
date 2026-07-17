@@ -4,11 +4,23 @@ const { sequelize } = require("../config/database");
 const User = require("./user")(sequelize);
 const AuditTrail = require("./auditTrail")(sequelize);
 const Programme = require("./programme")(sequelize);
+const ProgrammeHourDistribution = require("./programmeHourDistribution")(sequelize);
+const ProgrammeModule = require("./programmeModule")(sequelize);
+const ProgrammeFee = require("./programmeFee")(sequelize);
+const ProgrammeSubjectRequirement = require("./programmeSubjectRequirement")(sequelize);
+const AdmissionApplication = require("./admissionApplication")(sequelize);
+const Music = require("./music")(sequelize);
 
 const models = {
   User,
   AuditTrail,
   Programme,
+  ProgrammeHourDistribution,
+  ProgrammeModule,
+  ProgrammeFee,
+  ProgrammeSubjectRequirement,
+  AdmissionApplication,
+  Music,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -16,13 +28,19 @@ const initializeModels = async () => {
   try {
     console.log("🔄 Creating/updating tables...");
 
-    // Use alter: false to prevent schema conflicts in production
     console.log("📋 Syncing parent tables...");
-    await User.sync({ force: false, alter: false });
-    await Programme.sync({ force: false, alter: false });
+    await User.sync({ force: false, alter: true });
+    // alter: true so new programme columns are applied to existing tables
+    await Programme.sync({ force: false, alter: true });
 
     console.log("📋 Syncing child tables...");
     await AuditTrail.sync({ force: false, alter: false });
+    await ProgrammeHourDistribution.sync({ force: false, alter: true });
+    await ProgrammeModule.sync({ force: false, alter: true });
+    await ProgrammeFee.sync({ force: false, alter: true });
+    await ProgrammeSubjectRequirement.sync({ force: false, alter: true });
+    await AdmissionApplication.sync({ force: false, alter: true });
+    await Music.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -40,6 +58,16 @@ const initializeModels = async () => {
 
 const setupAssociations = () => {
   try {
+    models.User.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.User, {
+      foreignKey: "programme_id",
+      as: "students",
+      onDelete: "SET NULL",
+    });
+
     models.AuditTrail.belongsTo(models.User, {
       foreignKey: "user_id",
       as: "user",
@@ -47,6 +75,56 @@ const setupAssociations = () => {
     models.User.hasMany(models.AuditTrail, {
       foreignKey: "user_id",
       as: "audit_trails",
+    });
+
+    models.Programme.hasMany(models.ProgrammeHourDistribution, {
+      foreignKey: "programme_id",
+      as: "hour_distributions",
+      onDelete: "CASCADE",
+    });
+    models.ProgrammeHourDistribution.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+
+    models.Programme.hasMany(models.ProgrammeModule, {
+      foreignKey: "programme_id",
+      as: "modules",
+      onDelete: "CASCADE",
+    });
+    models.ProgrammeModule.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+
+    models.Programme.hasMany(models.ProgrammeFee, {
+      foreignKey: "programme_id",
+      as: "fee_structure",
+      onDelete: "CASCADE",
+    });
+    models.ProgrammeFee.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+
+    models.Programme.hasMany(models.ProgrammeSubjectRequirement, {
+      foreignKey: "programme_id",
+      as: "subject_requirements",
+      onDelete: "CASCADE",
+    });
+    models.ProgrammeSubjectRequirement.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+
+    models.Programme.hasMany(models.AdmissionApplication, {
+      foreignKey: "programme_id",
+      as: "admission_applications",
+      onDelete: "RESTRICT",
+    });
+    models.AdmissionApplication.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);

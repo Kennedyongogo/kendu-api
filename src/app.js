@@ -12,6 +12,9 @@ const auditCrudActivity = require("./middleware/auditCrudActivity");
 
 const userRoutes = require("./routes/userRoutes");
 const programmeRoutes = require("./routes/programmeRoutes");
+const programmeResourceRoutes = require("./routes/programmeResourceRoutes");
+const admissionRoutes = require("./routes/admissionRoutes");
+const musicRoutes = require("./routes/musicRoutes");
 const auditTrailRoutes = require("./routes/auditTrailRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 
@@ -34,8 +37,51 @@ if (!fs.existsSync(programmesUploadPath)) {
 }
 app.use("/uploads/programmes", express.static(programmesUploadPath));
 
+const admissionsUploadPath = path.join(__dirname, "..", "uploads", "admissions");
+if (!fs.existsSync(admissionsUploadPath)) {
+  fs.mkdirSync(admissionsUploadPath, { recursive: true });
+}
+app.use("/uploads/admissions", express.static(admissionsUploadPath));
+
+const musicUploadPath = path.join(__dirname, "..", "uploads", "music");
+if (!fs.existsSync(musicUploadPath)) {
+  fs.mkdirSync(musicUploadPath, { recursive: true });
+}
+app.use("/uploads/music", express.static(musicUploadPath));
+
 app.use("/api/users", userRoutes);
+// Programmes + nested hour-distributions, modules, fees, subject-requirements
+// GET/POST   /api/programmes
+// GET/PUT/DELETE /api/programmes/:id
+// GET/POST   /api/programmes/:id/hour-distributions
+// PUT/DELETE /api/programmes/:id/hour-distributions/:hourId
+// GET/POST   /api/programmes/:id/modules
+// PUT/DELETE /api/programmes/:id/modules/:moduleId
+// GET/POST   /api/programmes/:id/fees
+// PUT/DELETE /api/programmes/:id/fees/:feeId
+// GET/POST   /api/programmes/:id/subject-requirements
+// PUT/DELETE /api/programmes/:id/subject-requirements/:requirementId
 app.use("/api/programmes", programmeRoutes);
+// Global programme resources (paginated lists + CRUD by id)
+// GET/POST /api/programme-resources/fees
+// GET/PUT/DELETE /api/programme-resources/fees/:feeId
+// GET/POST /api/programme-resources/hours
+// GET/PUT/DELETE /api/programme-resources/hours/:hourId
+// GET/POST /api/programme-resources/modules
+// GET/PUT/DELETE /api/programme-resources/modules/:moduleId
+// GET/POST /api/programme-resources/subjects
+// GET/PUT/DELETE /api/programme-resources/subjects/:requirementId
+app.use("/api/programme-resources", programmeResourceRoutes);
+// Admissions
+// POST          /api/admissions              (public apply)
+// GET           /api/admissions              (admin list)
+// GET/PUT/DELETE /api/admissions/:id         (admin)
+app.use("/api/admissions", admissionRoutes);
+// Music tracks (background audio for public home)
+// GET            /api/music/public   (public active list)
+// GET/POST       /api/music          (admin)
+// GET/PUT/DELETE /api/music/:id      (admin)
+app.use("/api/music", musicRoutes);
 app.use("/api/audit-trail", auditTrailRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 

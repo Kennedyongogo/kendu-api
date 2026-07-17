@@ -7,6 +7,9 @@ const { logFromRequest } = require("./auditLogger");
 const RESOURCE_BY_PREFIX = {
   users: "user",
   programmes: "programme",
+  "programme-resources": "programme",
+  admissions: "admission_application",
+  music: "music",
   "audit-trail": "audit_trail",
 };
 
@@ -51,8 +54,17 @@ function shouldAudit(req) {
   ) {
     return false;
   }
+  // Admission mutations are logged in admissionController
+  if (
+    path.startsWith("/api/admissions") &&
+    ["POST", "PUT", "PATCH", "DELETE"].includes(String(req.method || "").toUpperCase())
+  ) {
+    return false;
+  }
   // Public programme list reads are fine to skip unless authenticated
   if (path.startsWith("/api/programmes") && req.method === "GET" && !req.user) return false;
+  // Public music playlist for home background audio
+  if (path.startsWith("/api/music/public") && req.method === "GET") return false;
   const method = String(req.method || "").toUpperCase();
   // Track all mutating CRUD; optional reads when user is logged in
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) return true;
