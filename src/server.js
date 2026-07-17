@@ -1,16 +1,12 @@
 const { app, appInitialized } = require("./app");
 const config = require("./config/config");
 const { testConnections } = require("./config/database");
-const { attachSocket } = require("./realtime/socketServer");
 
 const PORT = process.env.PORT || 4000;
 
 async function createServer() {
   try {
-    // Test database connections
     await testConnections();
-
-    // Wait for app initialization to complete
     await appInitialized;
 
     const server = app.listen(PORT, () => {
@@ -22,13 +18,8 @@ async function createServer() {
       console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
     });
 
-    attachSocket(server);
-
-    // Graceful shutdown for individual workers
     process.on("SIGTERM", () => {
-      console.log(
-        `🔄 Worker ${process.pid} received SIGTERM, shutting down...`
-      );
+      console.log(`🔄 Worker ${process.pid} received SIGTERM, shutting down...`);
       server.close(() => {
         console.log(`✅ Worker ${process.pid} closed`);
         process.exit(0);
@@ -50,10 +41,8 @@ async function createServer() {
   }
 }
 
-// Export for cluster mode
 module.exports = { createServer };
 
-// If running directly (not in cluster), start the server
 if (require.main === module) {
   createServer().catch((error) => {
     console.error("❌ Failed to start server:", error.message);

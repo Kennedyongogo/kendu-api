@@ -9,11 +9,6 @@ module.exports = (sequelize) => {
         primaryKey: true,
         defaultValue: DataTypes.UUIDV4,
       },
-      username: {
-        type: DataTypes.STRING(50),
-        allowNull: false,
-        unique: true,
-      },
       email: {
         type: DataTypes.STRING(100),
         allowNull: false,
@@ -25,15 +20,7 @@ module.exports = (sequelize) => {
         allowNull: false,
       },
       role: {
-        type: DataTypes.ENUM(
-          "super_admin",
-          "admin",
-          "teacher",
-          "student",
-          "parent",
-          "accountant",
-          "librarian"
-        ),
+        type: DataTypes.ENUM("admin", "staff", "student"),
         allowNull: false,
       },
       full_name: {
@@ -44,9 +31,14 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING(20),
         allowNull: true,
       },
-      address: {
-        type: DataTypes.TEXT,
+      position: {
+        type: DataTypes.STRING(120),
         allowNull: true,
+      },
+      admission_number: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        unique: true,
       },
       profile_image: {
         type: DataTypes.STRING(255),
@@ -55,6 +47,10 @@ module.exports = (sequelize) => {
       is_active: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
+      },
+      is_public: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
       },
       last_login: {
         type: DataTypes.DATE,

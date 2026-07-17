@@ -13,18 +13,19 @@ module.exports = (sequelize) => {
         type: DataTypes.UUID,
         allowNull: true,
         references: { model: "users", key: "id" },
+        onUpdate: "CASCADE",
+        onDelete: "SET NULL",
       },
       action: {
-        type: DataTypes.STRING(40),
+        type: DataTypes.ENUM("create", "read", "update", "delete", "login", "logout", "other"),
         allowNull: false,
       },
       resource_type: {
-        type: DataTypes.STRING(60),
+        type: DataTypes.STRING(80),
         allowNull: false,
-        defaultValue: "other",
       },
       resource_id: {
-        type: DataTypes.STRING(120),
+        type: DataTypes.STRING(100),
         allowNull: true,
       },
       description: {
@@ -32,17 +33,9 @@ module.exports = (sequelize) => {
         allowNull: true,
       },
       status: {
-        type: DataTypes.ENUM("success", "failed", "pending"),
+        type: DataTypes.ENUM("success", "failed"),
         allowNull: false,
         defaultValue: "success",
-      },
-      ip_address: {
-        type: DataTypes.STRING(64),
-        allowNull: true,
-      },
-      user_agent: {
-        type: DataTypes.TEXT,
-        allowNull: true,
       },
       old_values: {
         type: DataTypes.JSONB,
@@ -56,17 +49,20 @@ module.exports = (sequelize) => {
         type: DataTypes.JSONB,
         allowNull: true,
       },
+      ip_address: {
+        type: DataTypes.STRING(80),
+        allowNull: true,
+      },
+      user_agent: {
+        type: DataTypes.STRING(500),
+        allowNull: true,
+      },
     },
     {
       tableName: "audit_trails",
       timestamps: true,
       underscored: true,
-      indexes: [
-        { fields: ["user_id"] },
-        { fields: ["action"] },
-        { fields: ["resource_type"] },
-        { fields: ["created_at"] },
-      ],
+      updatedAt: false,
     }
   );
 

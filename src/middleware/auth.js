@@ -1,15 +1,22 @@
 const jwt = require("jsonwebtoken");
-const { User, Student } = require("../models");
+const { User } = require("../models");
 const config = require("../config/config");
-const {
-  SUPER_ADMIN_ROLE,
-  STAFF_ROLES,
-  SCHOOL_ADMIN_ROLES,
-} = require("../constants/userRoles");
 
+const ADMIN_ROLE = "admin";
+const STAFF_ROLES = ["admin", "staff"];
+const ADMIN_PORTAL_API_ROLES = ["admin", "staff"];
+const ADMIN_PORTAL_LOGIN_BLOCKED_ROLES = ["student"];
+const PUBLIC_PORTAL_ALLOWED_ROLES = ["student"];
+const SCHOOL_ADMIN_ROLES = ["admin"];
+const ALL_USER_ROLES = ["admin", "staff", "student"];
+
+exports.ADMIN_ROLE = ADMIN_ROLE;
 exports.STAFF_ROLES = STAFF_ROLES;
+exports.ADMIN_PORTAL_API_ROLES = ADMIN_PORTAL_API_ROLES;
+exports.ADMIN_PORTAL_LOGIN_BLOCKED_ROLES = ADMIN_PORTAL_LOGIN_BLOCKED_ROLES;
+exports.PUBLIC_PORTAL_ALLOWED_ROLES = PUBLIC_PORTAL_ALLOWED_ROLES;
 exports.SCHOOL_ADMIN_ROLES = SCHOOL_ADMIN_ROLES;
-exports.SUPER_ADMIN_ROLE = SUPER_ADMIN_ROLE;
+exports.ALL_USER_ROLES = ALL_USER_ROLES;
 
 exports.authenticateUser = async (req, res, next) => {
   const authHeader = req.header("Authorization");
@@ -43,21 +50,6 @@ exports.authenticateUser = async (req, res, next) => {
     }
 
     if (!user.is_active) {
-      if (user.role === "student") {
-        const st = await Student.findOne({
-          where: { user_id: user.id },
-          attributes: ["account_status", "reactivation_required"],
-        });
-        if (st?.account_status === "deactivated") {
-          return res.status(403).json({
-            success: false,
-            message:
-              "Your account has been deactivated due to non-payment. Please contact the school administration or complete outstanding fees.",
-            code: "ACCOUNT_DEACTIVATED",
-            reactivation_required: st.reactivation_required,
-          });
-        }
-      }
       return res.status(403).json({
         success: false,
         message: "Access denied, invalid or inactive user",
@@ -85,7 +77,7 @@ exports.optionalAuth = async (req, res, next) => {
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
-    return next(); // Continue without authentication
+    return next();
   }
 
   try {
@@ -104,7 +96,6 @@ exports.optionalAuth = async (req, res, next) => {
 
     next();
   } catch (error) {
-    // If token is invalid, continue without authentication
     next();
   }
 };
@@ -121,16 +112,6 @@ exports.authorizeRoles = (roles = []) => {
   };
 };
 
-exports.requireSuperAdmin = (req, res, next) => {
-  if (req.userType !== "user" || req.user.role !== SUPER_ADMIN_ROLE) {
-    return res.status(403).json({
-      success: false,
-      message: "Access denied",
-    });
-  }
-  next();
-};
-
 exports.requireAdmin = (req, res, next) => {
   if (req.userType !== "user" || !STAFF_ROLES.includes(req.user.role)) {
     return res.status(403).json({
@@ -141,16 +122,7 @@ exports.requireAdmin = (req, res, next) => {
   next();
 };
 
-exports.requireAdminOrHigher = (req, res, next) => {
-  if (req.userType !== "user" || !STAFF_ROLES.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      message: "Access denied",
-    });
-  }
-
-  next();
-};
+exports.requireAdminOrHigher = exports.requireAdmin;
 
 exports.verifyAdminOwnership = (userIdParam = "id") => {
   return (req, res, next) => {
@@ -184,14 +156,14 @@ exports.rateLimit = (maxRequests = 100, windowMs = 60000) => {
   return (req, res, next) => {
     const key = req.userId || req.ip;
     const now = Date.now();
-    
+
     if (!requestCounts.has(key)) {
       requestCounts.set(key, { count: 1, resetTime: now + windowMs });
       return next();
     }
 
     const userData = requestCounts.get(key);
-    
+
     if (now > userData.resetTime) {
       userData.count = 1;
       userData.resetTime = now + windowMs;

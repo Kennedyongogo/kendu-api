@@ -1,11 +1,15 @@
 const express = require("express");
 const router = express.Router();
-const { listAuditTrails, getAuditTrailById } = require("../controllers/auditTrailController");
+const { getDashboardStats } = require("../controllers/dashboardController");
 const { authenticateUser, authorizeRoles, ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
-router.get("/", authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES), listAuditTrails);
-router.get("/:id", authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES), getAuditTrailById);
+router.get(
+  "/stats",
+  authenticateUser,
+  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  getDashboardStats
+);
 
 router.use(errorHandler);
 

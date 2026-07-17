@@ -1,34 +1,103 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const path = require("path");
+const fs = require("fs");
 const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
-const { QueryTypes } = require("sequelize");
-const { User, Teacher, SchoolAdmin, sequelize } = require("../models");
+const { QueryTypes, Op, fn, col, where: sqlWhere } = require("sequelize");
+const { User, sequelize } = require("../models");
 const config = require("../config/config");
+const { logFromRequest, getIpAddress } = require("../middleware/auditLogger");
 const {
-  SUPER_ADMIN_ROLE,
+  ADMIN_ROLE,
   STAFF_ROLES,
   ADMIN_PORTAL_API_ROLES,
   ADMIN_PORTAL_LOGIN_BLOCKED_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
   ALL_USER_ROLES,
-} = require("../constants/userRoles");
-const { normalizeEmail, normalizeUsername, duplicateUserWhere } = require("../utils/userIdentity");
+} = require("../middleware/auth");
+
+async function auditLogin(req, { user = null, status = "success", description }) {
+  await logFromRequest(req, {
+    user_id: user?.id || null,
+    action: "login",
+    resource_type: "user",
+    resource_id: user?.id || null,
+    description: description || "User login",
+    status,
+    metadata: {
+      portal: req.body?.portal || null,
+      ip: getIpAddress(req),
+    },
+  });
+}
+
+function normalizeEmail(email) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
+}
+
+function normalizeAdmissionNumber(value) {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function profileImagePath(filename) {
+  if (!filename) return null;
+  if (/^https?:\/\//i.test(filename) || String(filename).startsWith("/uploads/")) {
+    return filename;
+  }
+  return `/uploads/profiles/${filename}`;
+}
+
+function deleteProfileFile(filename) {
+  if (!filename || /^https?:\/\//i.test(filename)) return;
+  const name = String(filename).replace(/^\/uploads\/profiles\//, "");
+  const full = path.join(__dirname, "..", "..", "uploads", "profiles", name);
+  fs.unlink(full, () => {});
+}
+
+function duplicateUserWhere(emailRaw, admissionNumberRaw) {
+  const conditions = [sqlWhere(fn("LOWER", col("email")), normalizeEmail(emailRaw))];
+  const admission = normalizeAdmissionNumber(admissionNumberRaw);
+  if (admission) {
+    conditions.push(sqlWhere(fn("UPPER", col("admission_number")), admission));
+  }
+  return { [Op.or]: conditions };
+}
+
+function normalizeRole(value) {
+  const role = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  if (role === "students") return "student";
+  return role;
+}
+
+function studentAdmissionRequired(role, admissionNumber) {
+  return role === "student" && !normalizeAdmissionNumber(admissionNumber);
+}
 
 const sanitizeUser = (user) => {
-  const plain = user.get ? user.get({ plain: true }) : user;
+  const plain = user.get ? user.get({ plain: true }) : { ...user };
   delete plain.password_hash;
+  plain.profile_image_url = profileImagePath(plain.profile_image);
   return plain;
 };
 
 const signToken = (user) =>
   jwt.sign(
-    { id: user.id, email: user.email, username: user.username, type: "user", role: user.role },
+    {
+      id: user.id,
+      email: user.email,
+      admission_number: user.admission_number,
+      type: "user",
+      role: user.role,
+    },
     config.jwtSecret,
     { expiresIn: "7d" }
   );
 
-const PUBLIC_REGISTER_ROLES = ["parent"];
+const PUBLIC_REGISTER_ROLES = ["student"];
 
 const MAX_IMPORT_ROWS = 500;
 
@@ -36,9 +105,6 @@ function normalizeExcelHeader(cell) {
   if (cell == null || String(cell).trim() === "") return null;
   let key = String(cell).trim().toLowerCase().replace(/\s+/g, "_");
   const aliases = {
-    user_name: "username",
-    login: "username",
-    userid: "username",
     email_address: "email",
     mail: "email",
     full_name: "full_name",
@@ -50,6 +116,10 @@ function normalizeExcelHeader(cell) {
     cellphone: "phone",
     tel: "phone",
     telephone: "phone",
+    admission_no: "admission_number",
+    admission: "admission_number",
+    reg_no: "admission_number",
+    students: "student",
   };
   return aliases[key] || key;
 }
@@ -60,11 +130,6 @@ function trimCell(v) {
   return String(v).trim();
 }
 
-function normalizeRoleCell(val) {
-  if (val == null || val === "") return "";
-  return String(val).trim().toLowerCase().replace(/\s+/g, "_");
-}
-
 exports.downloadImportTemplate = async (req, res) => {
   try {
     const workbook = new ExcelJS.Workbook();
@@ -72,20 +137,19 @@ exports.downloadImportTemplate = async (req, res) => {
       views: [{ state: "frozen", ySplit: 1 }],
     });
 
-    ws.addRow(["username", "email", "password", "full_name", "phone", "address", "role"]);
+    ws.addRow(["email", "password", "full_name", "phone", "admission_number", "role"]);
     ws.addRow([
-      "jdoe",
       "jane.doe@school.edu",
       "TempPass123!",
       "Jane Doe",
       "+254712345678",
-      "City",
-      "teacher",
+      "ADM-2026-001",
+      "student",
     ]);
 
     ws.getRow(1).font = { bold: true };
 
-    const roleColumnLetter = "G";
+    const roleColumnLetter = "F";
     const lastDataRow = MAX_IMPORT_ROWS + 1;
     const roleListQuoted = `"${ALL_USER_ROLES.join(",")}"`;
 
@@ -143,13 +207,13 @@ exports.importUsersExcel = async (req, res) => {
 
     const rawHeaders = matrix[0];
     const colKeys = rawHeaders.map(normalizeExcelHeader);
-    const requiredCanonical = ["username", "email", "password", "full_name", "role"];
+    const requiredCanonical = ["email", "password", "full_name", "role"];
     const present = new Set(colKeys.filter(Boolean));
     const missing = requiredCanonical.filter((k) => !present.has(k));
     if (missing.length) {
       return res.status(400).json({
         success: false,
-        message: `Missing required columns: ${missing.join(", ")}. Required: ${requiredCanonical.join(", ")}. Optional: phone, address.`,
+        message: `Missing required columns: ${missing.join(", ")}. Required: ${requiredCanonical.join(", ")}. Optional: phone, admission_number.`,
       });
     }
 
@@ -165,12 +229,11 @@ exports.importUsersExcel = async (req, res) => {
       }
 
       const emptyRow =
-        !obj.username &&
         !obj.email &&
         !obj.password &&
         !obj.full_name &&
         !obj.role &&
-        !(obj.phone || obj.address);
+        !(obj.phone || obj.admission_number);
       if (emptyRow) continue;
 
       dataRows.push({ excelRow, ...obj });
@@ -192,27 +255,26 @@ exports.importUsersExcel = async (req, res) => {
 
     const errors = [];
     const created = [];
-    const seenUser = new Set();
     const seenEmail = new Set();
+    const seenAdmission = new Set();
 
     for (const row of dataRows) {
       const {
         excelRow,
-        username,
         email,
         password,
         full_name,
         phone,
-        address,
+        admission_number,
         role: rawRole,
       } = row;
 
-      const role = normalizeRoleCell(rawRole);
+      const role = normalizeRole(rawRole);
 
-      if (!username || !email || !password || !full_name || !role) {
+      if (!email || !password || !full_name || !role) {
         errors.push({
           row: excelRow,
-          message: "username, email, password, full_name, and role are required",
+          message: "email, password, full_name, and role are required",
         });
         continue;
       }
@@ -225,47 +287,49 @@ exports.importUsersExcel = async (req, res) => {
         continue;
       }
 
-      if (role === SUPER_ADMIN_ROLE && req.user.role !== SUPER_ADMIN_ROLE) {
+      if (studentAdmissionRequired(role, admission_number)) {
         errors.push({
           row: excelRow,
-          message: "Only a super admin can create super_admin users",
+          message: "admission_number is required for student users",
         });
         continue;
       }
 
-      const emailLc = email.toLowerCase();
-      const userLc = username.toLowerCase();
-      if (seenUser.has(userLc) || seenEmail.has(emailLc)) {
+      const emailLc = normalizeEmail(email);
+      const admissionNorm = normalizeAdmissionNumber(admission_number);
+      if (seenEmail.has(emailLc) || (admissionNorm && seenAdmission.has(admissionNorm))) {
         errors.push({
           row: excelRow,
-          message: "Duplicate username or email within this file",
+          message: "Duplicate email or admission number within this file",
         });
         continue;
       }
-      seenUser.add(userLc);
       seenEmail.add(emailLc);
+      if (admissionNorm) seenAdmission.add(admissionNorm);
 
       try {
         const exists = await User.findOne({
-          where: duplicateUserWhere(email, username),
+          where: duplicateUserWhere(
+            email,
+            role === "student" ? admission_number : null
+          ),
         });
         if (exists) {
           errors.push({
             row: excelRow,
-            message: "Email or username already exists in database",
+            message: "Email or admission number already exists in database",
           });
           continue;
         }
 
         const password_hash = await bcrypt.hash(password, 10);
         const user = await User.create({
-          username: normalizeUsername(username),
           email: emailLc,
           password_hash,
           role,
           full_name,
           phone: phone || null,
-          address: address || null,
+          admission_number: role === "student" ? admissionNorm || null : null,
           profile_image: null,
         });
         created.push(sanitizeUser(user));
@@ -293,79 +357,107 @@ exports.importUsersExcel = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
-    const { email, username, password } = req.body;
+    const { email, admission_number, password } = req.body;
     const rawEmail = typeof email === "string" ? email.trim() : "";
-    const rawUsername = typeof username === "string" ? username.trim() : "";
-    const ident = (rawEmail || rawUsername || "").trim();
+    const rawAdmission =
+      typeof admission_number === "string" ? admission_number.trim() : "";
+    const ident = rawEmail || rawAdmission;
     const portalNorm =
       req.body.portal === undefined || req.body.portal === null
         ? ""
         : String(req.body.portal).trim().toLowerCase();
 
-    if (
-      ident === "" ||
-      password === undefined ||
-      password === null ||
-      password === ""
-    ) {
+    if (ident === "" || password === undefined || password === null || password === "") {
       return res.status(400).json({
         success: false,
-        message: "Password and email or username are required",
+        message: "Password and email or admission number are required",
       });
     }
 
     const pwd = typeof password === "string" ? password : String(password);
     const identLower = ident.toLowerCase();
+    const admissionNorm = normalizeAdmissionNumber(ident);
 
-    // 1) Indexed path: emails are stored lowercased for users created via admin.
     let user = await User.findOne({ where: { email: normalizeEmail(ident) } });
 
-    // 2) Postgres-safe match on email OR username (case/spacing). Avoids Sequelize+Op.or edge cases.
     if (!user) {
       const rows = await sequelize.query(
-        `SELECT id FROM users WHERE LOWER(TRIM(email)) = :ident OR LOWER(TRIM(username)) = :ident LIMIT 1`,
-        { replacements: { ident: identLower }, type: QueryTypes.SELECT }
+        `SELECT id FROM users
+         WHERE LOWER(TRIM(email)) = :ident
+            OR UPPER(TRIM(admission_number)) = :admission
+         LIMIT 1`,
+        {
+          replacements: { ident: identLower, admission: admissionNorm },
+          type: QueryTypes.SELECT,
+        }
       );
       const row = Array.isArray(rows) ? rows[0] : null;
       user = row?.id ? await User.findByPk(row.id) : null;
     }
 
     if (!user) {
+      await auditLogin(req, {
+        status: "failed",
+        description: "Login failed: user not found",
+      });
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
     const ok = await bcrypt.compare(pwd, user.password_hash);
     if (!ok) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: "Login failed: invalid password",
+      });
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
     if (!user.is_active) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: "Login failed: account inactive",
+      });
       return res.status(403).json({
         success: false,
         message:
           portalNorm === "public"
-            ? "This account is inactive. Contact the school if you should have access (for example after fees are cleared)."
+            ? "This account is inactive. Contact the school if you should have access."
             : "This account is inactive. Contact your administrator.",
       });
     }
 
     if (portalNorm === "admin" && ADMIN_PORTAL_LOGIN_BLOCKED_ROLES.includes(user.role)) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: "Login failed: student blocked from admin portal",
+      });
       return res.status(403).json({
         success: false,
-        message:
-          "This portal is for school staff and teachers only. Parents and students should use their own portal.",
+        message: "This portal is for school admin and staff only. Students should use the student portal.",
       });
     }
 
     if (portalNorm === "public" && !PUBLIC_PORTAL_ALLOWED_ROLES.includes(user.role)) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: "Login failed: staff blocked from student portal",
+      });
       return res.status(403).json({
         success: false,
-        message:
-          "This portal is for parents and students only. School staff should sign in through the admin portal.",
+        message: "This portal is for students only. Staff should sign in through the admin portal.",
       });
     }
 
     await user.update({ last_login: new Date() });
+    await auditLogin(req, {
+      user,
+      status: "success",
+      description: `Login success (${portalNorm || "unspecified"} portal)`,
+    });
 
     return res.json({
       success: true,
@@ -378,8 +470,8 @@ exports.login = async (req, res) => {
 
 exports.register = async (req, res) => {
   try {
-    const { username, email, password, full_name, phone, address, role } = req.body;
-    const requestedRole = role || "parent";
+    const { email, password, full_name, phone, admission_number, role } = req.body;
+    const requestedRole = normalizeRole(role || "student");
 
     if (!PUBLIC_REGISTER_ROLES.includes(requestedRole)) {
       return res.status(403).json({
@@ -388,29 +480,41 @@ exports.register = async (req, res) => {
       });
     }
 
-    if (!username || !email || !password || !full_name) {
+    if (!email || !password || !full_name) {
       return res.status(400).json({
         success: false,
-        message: "username, email, password, and full_name are required",
+        message: "email, password, and full_name are required",
+      });
+    }
+
+    if (studentAdmissionRequired(requestedRole, admission_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "admission_number is required for student registration",
       });
     }
 
     const exists = await User.findOne({
-      where: duplicateUserWhere(email, username),
+      where: duplicateUserWhere(email, admission_number),
     });
     if (exists) {
-      return res.status(400).json({ success: false, message: "Email or username already in use" });
+      return res.status(400).json({
+        success: false,
+        message: "Email or admission number already in use",
+      });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
     const user = await User.create({
-      username: normalizeUsername(username),
       email: normalizeEmail(email),
       password_hash,
       role: requestedRole,
       full_name,
       phone,
-      address,
+      admission_number:
+        requestedRole === "student"
+          ? normalizeAdmissionNumber(admission_number) || null
+          : null,
       profile_image: req.body.profile_image || null,
     });
 
@@ -424,32 +528,8 @@ exports.me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [
-        {
-          model: Teacher,
-          as: "teacher_profile",
-          attributes: ["profile_picture"],
-          required: false,
-        },
-        {
-          model: SchoolAdmin,
-          as: "school_admin_profile",
-          attributes: ["profile_picture"],
-          required: false,
-        },
-      ],
     });
-    const userData = user.get({ plain: true });
-    // If teacher, use teacher's profile_picture, else if school admin use school admin's profile_picture, else use user's profile_image
-    if (userData.teacher_profile?.profile_picture) {
-      userData.profile_image = userData.teacher_profile.profile_picture;
-    } else if (userData.school_admin_profile?.profile_picture) {
-      userData.profile_image = userData.school_admin_profile.profile_picture;
-    }
-    delete userData.teacher_profile;
-    delete userData.school_admin_profile;
-    console.log("User data sent to client:", userData);
-    return res.json({ success: true, data: userData });
+    return res.json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -457,7 +537,7 @@ exports.me = async (req, res) => {
 
 exports.listUsers = async (req, res) => {
   try {
-    const roleFilter = req.query.role;
+    const roleFilter = normalizeRole(req.query.role);
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
 
@@ -477,13 +557,42 @@ exports.listUsers = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows,
+      data: rows.map((row) => sanitizeUser(row)),
       pagination: {
         total: count,
         page,
         limit,
         totalPages: Math.max(1, Math.ceil(count / limit)),
       },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** Public directory: active staff & admin marked is_public (no auth). */
+exports.listPublicStaff = async (req, res) => {
+  try {
+    const rows = await User.findAll({
+      where: {
+        is_public: true,
+        is_active: true,
+        role: { [Op.in]: ["admin", "staff"] },
+      },
+      attributes: ["id", "full_name", "role", "position", "phone", "profile_image", "created_at"],
+      order: [
+        ["role", "ASC"],
+        ["full_name", "ASC"],
+      ],
+    });
+
+    return res.json({
+      success: true,
+      data: rows.map((row) => {
+        const plain = row.get({ plain: true });
+        plain.profile_image_url = profileImagePath(plain.profile_image);
+        return plain;
+      }),
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -501,7 +610,7 @@ exports.getUserById = async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    return res.json({ success: true, data: user });
+    return res.json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -509,45 +618,83 @@ exports.getUserById = async (req, res) => {
 
 exports.createUser = async (req, res) => {
   try {
-    const { username, email, password, full_name, phone, address, role, profile_image } = req.body;
-    if (!username || !email || !password || !full_name || !role) {
+    const {
+      email,
+      password,
+      full_name,
+      phone,
+      position,
+      admission_number,
+      role,
+      profile_image,
+      is_public,
+    } = req.body;
+    const normalizedRole = normalizeRole(role);
+
+    if (!email || !password || !full_name || !normalizedRole) {
       return res.status(400).json({
         success: false,
-        message: "username, email, password, full_name, and role are required",
+        message: "email, password, full_name, and role are required",
       });
     }
 
-    if (!ALL_USER_ROLES.includes(role)) {
+    if (!ALL_USER_ROLES.includes(normalizedRole)) {
       return res.status(400).json({
         success: false,
         message: `Invalid role. Allowed: ${ALL_USER_ROLES.join(", ")}`,
       });
     }
 
-    if (role === SUPER_ADMIN_ROLE && req.user.role !== SUPER_ADMIN_ROLE) {
+    if (normalizedRole === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({
         success: false,
-        message: "Only a super admin can create super admin users",
+        message: "Only an admin can create admin users",
+      });
+    }
+
+    if (studentAdmissionRequired(normalizedRole, admission_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "admission_number is required for student users",
       });
     }
 
     const exists = await User.findOne({
-      where: duplicateUserWhere(email, username),
+      where: duplicateUserWhere(
+        email,
+        normalizedRole === "student" ? admission_number : null
+      ),
     });
     if (exists) {
-      return res.status(400).json({ success: false, message: "Email or username already in use" });
+      return res.status(400).json({
+        success: false,
+        message: "Email or admission number already in use",
+      });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
+    const imageFilename = req.file?.filename || profile_image || null;
     const user = await User.create({
-      username: normalizeUsername(username),
       email: normalizeEmail(email),
       password_hash,
-      role,
+      role: normalizedRole,
       full_name,
       phone,
-      address,
-      profile_image: profile_image || null,
+      position:
+        normalizedRole === "student"
+          ? null
+          : typeof position === "string"
+            ? position.trim() || null
+            : null,
+      admission_number:
+        normalizedRole === "student"
+          ? normalizeAdmissionNumber(admission_number) || null
+          : null,
+      profile_image: imageFilename,
+      is_public:
+        normalizedRole === "student"
+          ? false
+          : is_public === true || is_public === "true",
     });
 
     return res.status(201).json({ success: true, data: sanitizeUser(user) });
@@ -567,40 +714,35 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    if (user.role === SUPER_ADMIN_ROLE && req.user.role !== SUPER_ADMIN_ROLE) {
+    if (user.role === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
-    const allowed = ["full_name", "phone", "address", "profile_image", "email", "username", "role"];
+    const allowed = [
+      "full_name",
+      "phone",
+      "position",
+      "profile_image",
+      "email",
+      "admission_number",
+      "role",
+      "is_public",
+    ];
     const patch = {};
     for (const key of allowed) {
       if (req.body[key] !== undefined) patch[key] = req.body[key];
     }
 
     if (req.body.role !== undefined) {
-      const requestedRole = req.body.role;
+      const requestedRole = normalizeRole(req.body.role);
 
-      if (!STAFF_ROLES.includes(req.user.role)) {
+      if (req.user.role !== ADMIN_ROLE) {
         if (requestedRole !== user.role) {
           return res.status(403).json({
             success: false,
             message: "You do not have permission to change user roles",
           });
         }
-      } else if (requestedRole === SUPER_ADMIN_ROLE && req.user.role !== SUPER_ADMIN_ROLE) {
-        return res.status(403).json({
-          success: false,
-          message: "Only a super admin can assign the super admin role",
-        });
-      } else if (
-        user.role === SUPER_ADMIN_ROLE &&
-        requestedRole !== SUPER_ADMIN_ROLE &&
-        req.user.role !== SUPER_ADMIN_ROLE
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: "Only a super admin can change a super admin user's role",
-        });
       } else if (!ALL_USER_ROLES.includes(requestedRole)) {
         return res.status(400).json({
           success: false,
@@ -611,8 +753,49 @@ exports.updateUser = async (req, res) => {
       }
     }
 
+    const effectiveRole = patch.role || user.role;
+    const effectiveAdmission =
+      patch.admission_number !== undefined
+        ? patch.admission_number
+        : user.admission_number;
+    if (studentAdmissionRequired(effectiveRole, effectiveAdmission)) {
+      return res.status(400).json({
+        success: false,
+        message: "admission_number is required for student users",
+      });
+    }
+
     if (patch.email !== undefined) patch.email = normalizeEmail(patch.email);
-    if (patch.username !== undefined) patch.username = normalizeUsername(patch.username);
+    if (effectiveRole !== "student") {
+      patch.admission_number = null;
+    } else if (patch.admission_number !== undefined) {
+      patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
+    }
+
+    if (patch.position !== undefined) {
+      patch.position =
+        effectiveRole === "student"
+          ? null
+          : typeof patch.position === "string"
+            ? patch.position.trim() || null
+            : null;
+    } else if (effectiveRole === "student") {
+      patch.position = null;
+    }
+
+    if (req.file?.filename) {
+      if (user.profile_image) deleteProfileFile(user.profile_image);
+      patch.profile_image = req.file.filename;
+    }
+
+    if (patch.is_public !== undefined) {
+      patch.is_public =
+        effectiveRole === "student"
+          ? false
+          : patch.is_public === true || patch.is_public === "true";
+    } else if (effectiveRole === "student") {
+      patch.is_public = false;
+    }
 
     await user.update(patch);
     return res.json({ success: true, data: sanitizeUser(user) });
@@ -628,10 +811,7 @@ exports.changePassword = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    if (
-      req.user.id !== user.id &&
-      !["super_admin", "admin", "accountant"].includes(req.user.role)
-    ) {
+    if (req.user.id !== user.id && !STAFF_ROLES.includes(req.user.role)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
@@ -677,7 +857,7 @@ exports.deleteUser = async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    if (user.role === SUPER_ADMIN_ROLE && req.user.role !== SUPER_ADMIN_ROLE) {
+    if (user.role === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
     await user.destroy();
