@@ -1,0 +1,2 @@
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS profile_picture VARCHAR(500);
+ALTER TABLE students ADD COLUMN IF NOT EXISTS profile_picture VARCHAR(500);
