@@ -10,6 +10,9 @@ const ProgrammeFee = require("./programmeFee")(sequelize);
 const ProgrammeSubjectRequirement = require("./programmeSubjectRequirement")(sequelize);
 const AdmissionApplication = require("./admissionApplication")(sequelize);
 const Music = require("./music")(sequelize);
+const StudentFeeCharge = require("./studentFeeCharge")(sequelize);
+const FeePayment = require("./feePayment")(sequelize);
+const FeePaymentAllocation = require("./feePaymentAllocation")(sequelize);
 
 const models = {
   User,
@@ -21,6 +24,9 @@ const models = {
   ProgrammeSubjectRequirement,
   AdmissionApplication,
   Music,
+  StudentFeeCharge,
+  FeePayment,
+  FeePaymentAllocation,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -41,6 +47,9 @@ const initializeModels = async () => {
     await ProgrammeSubjectRequirement.sync({ force: false, alter: true });
     await AdmissionApplication.sync({ force: false, alter: true });
     await Music.sync({ force: false, alter: true });
+    await StudentFeeCharge.sync({ force: false, alter: true });
+    await FeePayment.sync({ force: false, alter: true });
+    await FeePaymentAllocation.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -105,6 +114,62 @@ const setupAssociations = () => {
     models.ProgrammeFee.belongsTo(models.Programme, {
       foreignKey: "programme_id",
       as: "programme",
+    });
+
+    models.User.hasMany(models.StudentFeeCharge, {
+      foreignKey: "student_id",
+      as: "fee_charges",
+      onDelete: "RESTRICT",
+    });
+    models.StudentFeeCharge.belongsTo(models.User, {
+      foreignKey: "student_id",
+      as: "student",
+    });
+    models.Programme.hasMany(models.StudentFeeCharge, {
+      foreignKey: "programme_id",
+      as: "student_fee_charges",
+      onDelete: "RESTRICT",
+    });
+    models.StudentFeeCharge.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.StudentFeeCharge.belongsTo(models.ProgrammeFee, {
+      foreignKey: "programme_fee_id",
+      as: "fee_structure",
+    });
+
+    models.User.hasMany(models.FeePayment, {
+      foreignKey: "student_id",
+      as: "fee_payments",
+      onDelete: "RESTRICT",
+    });
+    models.FeePayment.belongsTo(models.User, {
+      foreignKey: "student_id",
+      as: "student",
+    });
+    models.FeePayment.belongsTo(models.User, {
+      foreignKey: "recorded_by",
+      as: "recorder",
+    });
+
+    models.FeePayment.hasMany(models.FeePaymentAllocation, {
+      foreignKey: "payment_id",
+      as: "allocations",
+      onDelete: "CASCADE",
+    });
+    models.FeePaymentAllocation.belongsTo(models.FeePayment, {
+      foreignKey: "payment_id",
+      as: "payment",
+    });
+    models.StudentFeeCharge.hasMany(models.FeePaymentAllocation, {
+      foreignKey: "charge_id",
+      as: "allocations",
+      onDelete: "RESTRICT",
+    });
+    models.FeePaymentAllocation.belongsTo(models.StudentFeeCharge, {
+      foreignKey: "charge_id",
+      as: "charge",
     });
 
     models.Programme.hasMany(models.ProgrammeSubjectRequirement, {
