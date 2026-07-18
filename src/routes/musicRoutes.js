@@ -4,6 +4,7 @@ const fs = require("fs");
 const multer = require("multer");
 const {
   listPublicTracks,
+  streamTrack,
   listTracks,
   getTrackById,
   createTrack,
@@ -43,6 +44,7 @@ const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
 
 // Public: active tracks for home-page background music
 router.get("/public", listPublicTracks);
+router.get("/:id/stream", streamTrack);
 
 // Admin CRUD
 router.get("/", ...adminOnly, listTracks);

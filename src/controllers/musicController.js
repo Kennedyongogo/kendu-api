@@ -3,15 +3,16 @@ const fs = require("fs");
 const { Op } = require("sequelize");
 const { Music } = require("../models");
 
-function audioUrl(filename) {
-  if (!filename) return null;
-  if (/^https?:\/\//i.test(filename)) return filename;
-  return `/uploads/music/${filename}`;
+// Served via /api so it works behind proxies that only forward /api (unlike /uploads)
+function audioUrl(plain) {
+  if (!plain.filename) return null;
+  if (/^https?:\/\//i.test(plain.filename)) return plain.filename;
+  return `/api/music/${plain.id}/stream`;
 }
 
 function serializeTrack(row) {
   const plain = row.get ? row.get({ plain: true }) : { ...row };
-  plain.audio_url = audioUrl(plain.filename);
+  plain.audio_url = audioUrl(plain);
   plain.volume = plain.volume != null ? Number(plain.volume) : 0.35;
   return plain;
 }
@@ -49,6 +50,27 @@ function unlinkMusicFile(filename) {
   const filePath = path.join(__dirname, "..", "..", "uploads", "music", filename);
   fs.unlink(filePath, () => {});
 }
+
+/** Public: stream a track's audio file (supports range requests for seeking) */
+exports.streamTrack = async (req, res) => {
+  try {
+    // No is_active check: the admin portal previews inactive tracks via the same URL
+    const row = await Music.findByPk(req.params.id);
+    if (!row || !row.filename) {
+      return res.status(404).json({ success: false, message: "Music track not found" });
+    }
+    if (/^https?:\/\//i.test(row.filename)) {
+      return res.redirect(row.filename);
+    }
+    const filePath = path.join(__dirname, "..", "..", "uploads", "music", row.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: "Audio file missing on server" });
+    }
+    return res.sendFile(filePath);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 /** Public: active tracks for background playback */
 exports.listPublicTracks = async (_req, res) => {
