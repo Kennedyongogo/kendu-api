@@ -13,6 +13,7 @@ const Music = require("./music")(sequelize);
 const StudentFeeCharge = require("./studentFeeCharge")(sequelize);
 const FeePayment = require("./feePayment")(sequelize);
 const FeePaymentAllocation = require("./feePaymentAllocation")(sequelize);
+const TimetableEntry = require("./timetableEntry")(sequelize);
 
 const models = {
   User,
@@ -27,6 +28,7 @@ const models = {
   StudentFeeCharge,
   FeePayment,
   FeePaymentAllocation,
+  TimetableEntry,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -50,6 +52,7 @@ const initializeModels = async () => {
     await StudentFeeCharge.sync({ force: false, alter: true });
     await FeePayment.sync({ force: false, alter: true });
     await FeePaymentAllocation.sync({ force: false, alter: true });
+    await TimetableEntry.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -190,6 +193,20 @@ const setupAssociations = () => {
     models.AdmissionApplication.belongsTo(models.Programme, {
       foreignKey: "programme_id",
       as: "programme",
+    });
+
+    models.Programme.hasMany(models.TimetableEntry, {
+      foreignKey: "programme_id",
+      as: "timetable_entries",
+      onDelete: "CASCADE",
+    });
+    models.TimetableEntry.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.TimetableEntry.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);

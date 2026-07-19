@@ -18,6 +18,7 @@ const musicRoutes = require("./routes/musicRoutes");
 const auditTrailRoutes = require("./routes/auditTrailRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const accountingRoutes = require("./routes/accountingRoutes");
+const timetableRoutes = require("./routes/timetableRoutes");
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use("/api/music", musicRoutes);
 app.use("/api/audit-trail", auditTrailRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/accounting", accountingRoutes);
+app.use("/api/timetable", timetableRoutes);
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {

@@ -23,7 +23,9 @@ function documentUrl(filename) {
 
 function normalizeStatusNotes(value) {
   if (!value) return [];
-  if (Array.isArray(value)) return value;
+  // Always return a copy: mutating the instance's own JSONB array in place
+  // defeats Sequelize's change detection and the update is silently skipped.
+  if (Array.isArray(value)) return [...value];
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
