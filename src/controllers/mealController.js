@@ -43,7 +43,7 @@ async function loadStudentCard(userId) {
       {
         model: Programme,
         as: "programme",
-        attributes: ["id", "name", "code"],
+        attributes: ["id", "name"],
         required: false,
       },
     ],
@@ -67,7 +67,6 @@ async function loadStudentCard(userId) {
     semester: plain.semester || null,
     programme_id: plain.programme_id || null,
     programme_name: plain.programme?.name || null,
-    programme_code: plain.programme?.code || null,
     academic_year: academicYearLabel(),
     issued_on: issuedOnLabel(),
     valid_label: "Current term",
