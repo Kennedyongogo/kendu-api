@@ -1,12 +1,13 @@
 /**
  * CR80 / ISO ID-1 meal card PDF (85.60 × 53.98 mm).
+ * Uses only hex colors — PDFKit does not reliably parse rgba().
  */
 const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
+const sharp = require("sharp");
 
 const BRAND = {
-  name: "Kendu Adventist School of Medical Sciences",
   short: "KASMS",
   green: "#006050",
   greenDark: "#004840",
@@ -14,6 +15,8 @@ const BRAND = {
   gold: "#c8a840",
   cream: "#f7f4ef",
   inkMuted: "#5a6478",
+  white: "#ffffff",
+  photoBg: "#dfe8e4",
 };
 
 /** CR80 in PDF points (1 pt = 1/72 in; 1 in = 25.4 mm). */
@@ -39,23 +42,82 @@ function resolveProfilePath(profileImage) {
   return fs.existsSync(full) ? full : null;
 }
 
-function clip(doc, text, maxLen) {
-  const s = String(text || "").trim();
-  if (!s) return "—";
-  return s.length > maxLen ? `${s.slice(0, maxLen - 1)}…` : s;
+function safeText(value, maxLen) {
+  let s = String(value ?? "")
+    .replace(/\u2014/g, "-")
+    .replace(/\u2013/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "-";
+  if (s.length > maxLen) return `${s.slice(0, maxLen - 3)}...`;
+  return s;
+}
+
+/** Draw text at an absolute position without shifting the document flow. */
+function write(doc, text, x, y, opts = {}) {
+  const {
+    width,
+    size = 8,
+    color = BRAND.navy,
+    bold = false,
+    align = "left",
+  } = opts;
+  doc.fillOpacity(1);
+  doc
+    .font(bold ? "Helvetica-Bold" : "Helvetica")
+    .fontSize(size)
+    .fillColor(color);
+  doc.text(String(text), x, y, {
+    width,
+    align,
+    lineBreak: false,
+    ellipsis: false,
+  });
+}
+
+/**
+ * Crop/scale photo like CSS object-fit: cover so it fills the frame edge-to-edge.
+ */
+async function coverPhotoBuffer(profilePath, widthPt, heightPt) {
+  const dpi = 220;
+  const w = Math.max(1, Math.round((widthPt / 72) * dpi));
+  const h = Math.max(1, Math.round((heightPt / 72) * dpi));
+  return sharp(profilePath)
+    .rotate() // honour EXIF orientation
+    .resize(w, h, { fit: "cover", position: "attention" })
+    .jpeg({ quality: 90, mozjpeg: true })
+    .toBuffer();
 }
 
 /**
  * @param {object} card — meal card payload from mealController
  * @returns {Promise<Buffer>}
  */
-function buildMealCardPdf(card) {
+async function buildMealCardPdf(card) {
+  const photoX = 16;
+  const photoY = 28;
+  const photoW = 52;
+  const photoH = 62;
+
+  let photoBuffer = null;
+  const profilePath = resolveProfilePath(card.profile_image);
+  if (profilePath) {
+    try {
+      photoBuffer = await coverPhotoBuffer(profilePath, photoW, photoH);
+    } catch {
+      photoBuffer = null;
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: [CR80.width, CR80.height],
       margin: 0,
+      autoFirstPage: true,
       info: {
-        Title: `Meal Card — ${card.admission_number || card.full_name}`,
+        Title: `Meal Card - ${safeText(card.admission_number || card.full_name, 40)}`,
         Author: BRAND.short,
       },
     });
@@ -68,55 +130,46 @@ function buildMealCardPdf(card) {
     const W = CR80.width;
     const H = CR80.height;
 
-    // Background
     doc.rect(0, 0, W, H).fill(BRAND.cream);
-
-    // Left brand strip
     doc.rect(0, 0, 8, H).fill(BRAND.green);
     doc.rect(8, 0, 2.5, H).fill(BRAND.gold);
-
-    // Top bar
     doc.rect(10.5, 0, W - 10.5, 22).fill(BRAND.green);
+    doc.rect(10.5, H - 28, W - 10.5, 28).fill(BRAND.greenDark);
 
     const logoPath = resolveLogoPath();
     if (logoPath) {
       try {
-        doc.image(logoPath, 16, 3.5, { height: 15 });
+        doc.image(logoPath, 14, 4, { height: 14, width: 14 });
       } catch {
-        /* ignore logo errors */
+        /* ignore */
       }
     }
 
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(7)
-      .fillColor("#ffffff")
-      .text("MEAL CARD", logoPath ? 36 : 16, 7, { width: W - 100, lineBreak: false });
+    write(doc, "MEAL CARD", logoPath ? 32 : 14, 7, {
+      size: 8,
+      bold: true,
+      color: BRAND.white,
+      width: 120,
+    });
+    write(doc, BRAND.short, W - 50, 8, {
+      size: 6,
+      bold: true,
+      color: BRAND.white,
+      width: 40,
+      align: "right",
+    });
 
-    doc
-      .font("Helvetica")
-      .fontSize(5.5)
-      .fillColor("rgba(255,255,255,0.85)")
-      .text(BRAND.short, W - 52, 8, { width: 44, align: "right", lineBreak: false });
+    // Photo frame — image fills the box edge-to-edge (cover crop)
+    doc.roundedRect(photoX, photoY, photoW, photoH, 4).fillAndStroke(BRAND.white, BRAND.green);
 
-    // Photo
-    const photoX = 16;
-    const photoY = 28;
-    const photoW = 52;
-    const photoH = 64;
-    doc.roundedRect(photoX, photoY, photoW, photoH, 4).fillAndStroke("#ffffff", BRAND.green);
-
-    const profilePath = resolveProfilePath(card.profile_image);
-    if (profilePath) {
+    if (photoBuffer) {
       try {
-        doc.save();
-        doc.roundedRect(photoX + 1.5, photoY + 1.5, photoW - 3, photoH - 3, 3).clip();
-        doc.image(profilePath, photoX + 1.5, photoY + 1.5, {
-          fit: [photoW - 3, photoH - 3],
-          align: "center",
-          valign: "center",
+        doc.image(photoBuffer, photoX, photoY, {
+          width: photoW,
+          height: photoH,
         });
-        doc.restore();
+        // Green border on top of the photo so edges stay neat
+        doc.lineWidth(1.25).roundedRect(photoX, photoY, photoW, photoH, 4).stroke(BRAND.green);
       } catch {
         drawPhotoPlaceholder(doc, photoX, photoY, photoW, photoH, card.full_name);
       }
@@ -124,44 +177,20 @@ function buildMealCardPdf(card) {
       drawPhotoPlaceholder(doc, photoX, photoY, photoW, photoH, card.full_name);
     }
 
-    // Details
     const textX = 76;
-    let y = 30;
+    const textW = W - textX - 8;
+    const fullName = safeText(card.full_name, 26);
+    const admission = safeText(card.admission_number, 22);
+    const programme = safeText(card.programme_name, 36);
 
-    doc.font("Helvetica").fontSize(5).fillColor(BRAND.inkMuted).text("FULL NAME", textX, y, {
-      lineBreak: false,
-    });
-    y += 7;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(9)
-      .fillColor(BRAND.navy)
-      .text(clip(card.full_name, 28), textX, y, { width: W - textX - 10, lineBreak: false });
-    y += 14;
+    write(doc, "FULL NAME", textX, 30, { size: 5, color: BRAND.inkMuted, width: textW });
+    write(doc, fullName, textX, 37, { size: 9, bold: true, color: BRAND.navy, width: textW });
 
-    doc.font("Helvetica").fontSize(5).fillColor(BRAND.inkMuted).text("ADMISSION NO.", textX, y, {
-      lineBreak: false,
-    });
-    y += 7;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(9)
-      .fillColor(BRAND.greenDark)
-      .text(clip(card.admission_number, 22), textX, y, { width: W - textX - 10, lineBreak: false });
-    y += 14;
+    write(doc, "ADMISSION NO.", textX, 52, { size: 5, color: BRAND.inkMuted, width: textW });
+    write(doc, admission, textX, 59, { size: 9, bold: true, color: BRAND.greenDark, width: textW });
 
-    doc.font("Helvetica").fontSize(5).fillColor(BRAND.inkMuted).text("PROGRAMME", textX, y, {
-      lineBreak: false,
-    });
-    y += 7;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(7)
-      .fillColor(BRAND.navy)
-      .text(clip(card.programme_name, 34), textX, y, { width: W - textX - 10, lineBreak: false });
-
-    // Footer strip
-    doc.rect(10.5, H - 28, W - 10.5, 28).fill(BRAND.greenDark);
+    write(doc, "PROGRAMME", textX, 74, { size: 5, color: BRAND.inkMuted, width: textW });
+    write(doc, programme, textX, 81, { size: 7, bold: true, color: BRAND.navy, width: textW });
 
     const yearLine = [
       card.year_of_study ? `Y${card.year_of_study}` : null,
@@ -169,58 +198,52 @@ function buildMealCardPdf(card) {
       card.academic_year || null,
     ]
       .filter(Boolean)
-      .join(" · ");
+      .join(" | ");
 
-    doc
-      .font("Helvetica")
-      .fontSize(5.5)
-      .fillColor("rgba(255,255,255,0.8)")
-      .text(yearLine || "Student meal access", 16, H - 22, {
-        width: W - 80,
-        lineBreak: false,
-      });
-
-    doc
-      .font("Helvetica")
-      .fontSize(5)
-      .fillColor(BRAND.gold)
-      .text(`Issued ${card.issued_on || "—"}`, 16, H - 12, {
-        width: W - 80,
-        lineBreak: false,
-      });
-
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(6)
-      .fillColor("#ffffff")
-      .text("VALID", W - 48, H - 20, { width: 40, align: "right", lineBreak: false });
-    doc
-      .font("Helvetica")
-      .fontSize(5)
-      .fillColor(BRAND.gold)
-      .text(clip(card.valid_label || "Current term", 14), W - 48, H - 11, {
-        width: 40,
-        align: "right",
-        lineBreak: false,
-      });
+    write(doc, safeText(yearLine || "Student meal access", 40), 16, H - 22, {
+      size: 6,
+      color: BRAND.white,
+      width: W - 80,
+    });
+    write(doc, `Issued ${safeText(card.issued_on, 18)}`, 16, H - 12, {
+      size: 5,
+      color: BRAND.gold,
+      width: W - 80,
+    });
+    write(doc, "VALID", W - 48, H - 20, {
+      size: 6,
+      bold: true,
+      color: BRAND.white,
+      width: 40,
+      align: "right",
+    });
+    write(doc, safeText(card.valid_label || "Current term", 14), W - 48, H - 11, {
+      size: 5,
+      color: BRAND.gold,
+      width: 40,
+      align: "right",
+    });
 
     doc.end();
   });
 }
 
 function drawPhotoPlaceholder(doc, x, y, w, h, fullName) {
-  doc.roundedRect(x + 1.5, y + 1.5, w - 3, h - 3, 3).fill("#dfe8e4");
+  doc.roundedRect(x + 2, y + 2, w - 4, h - 4, 3).fill(BRAND.photoBg);
   const initials = String(fullName || "S")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase())
-    .join("");
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(16)
-    .fillColor(BRAND.green)
-    .text(initials || "S", x, y + h / 2 - 8, { width: w, align: "center", lineBreak: false });
+    .join("")
+    .replace(/[^A-Z]/g, "");
+  write(doc, initials || "S", x, y + h / 2 - 8, {
+    size: 16,
+    bold: true,
+    color: BRAND.green,
+    width: w,
+    align: "center",
+  });
 }
 
 module.exports = {
