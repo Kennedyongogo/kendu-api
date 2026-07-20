@@ -5,7 +5,7 @@ const fs = require("fs");
 const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
 const { QueryTypes, Op, fn, col, where: sqlWhere } = require("sequelize");
-const { User, Programme, sequelize } = require("../models");
+const { User, Programme, Department, sequelize } = require("../models");
 const config = require("../config/config");
 const { logFromRequest, getIpAddress } = require("../middleware/auditLogger");
 const {
@@ -97,6 +97,13 @@ const programmeInclude = {
   required: false,
 };
 
+const departmentInclude = {
+  model: Department,
+  as: "department",
+  attributes: ["id", "name", "code", "is_active"],
+  required: false,
+};
+
 function parseYearOfStudy(value) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
   const n = parseInt(String(value).replace(/[^0-9]/g, ""), 10);
@@ -122,6 +129,19 @@ async function resolveProgrammeId(value) {
     return byId ? byId.id : null;
   }
   const byName = await Programme.findOne({
+    where: sqlWhere(fn("LOWER", col("name")), raw.toLowerCase()),
+  });
+  return byName ? byName.id : null;
+}
+
+async function resolveDepartmentId(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const raw = String(value).trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+    const byId = await Department.findByPk(raw);
+    return byId ? byId.id : null;
+  }
+  const byName = await Department.findOne({
     where: sqlWhere(fn("LOWER", col("name")), raw.toLowerCase()),
   });
   return byName ? byName.id : null;
@@ -889,6 +909,7 @@ exports.me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: { exclude: ["password_hash"] },
+      include: [programmeInclude, departmentInclude],
     });
     return res.json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
@@ -911,7 +932,7 @@ exports.listUsers = async (req, res) => {
     const { count, rows } = await User.findAndCountAll({
       where,
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude],
+      include: [programmeInclude, departmentInclude],
       order: [["created_at", "DESC"]],
       limit,
       offset,
@@ -969,7 +990,7 @@ exports.getUserById = async (req, res) => {
     }
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude],
+      include: [programmeInclude, departmentInclude],
     });
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
@@ -996,6 +1017,7 @@ exports.createUser = async (req, res) => {
       programme,
       year_of_study: yearRaw,
       semester: semesterRaw,
+      department_id: departmentIdRaw,
     } = req.body;
     const normalizedRole = normalizeRole(role);
 
@@ -1030,6 +1052,7 @@ exports.createUser = async (req, res) => {
     let programme_id = null;
     let year_of_study = null;
     let semester = null;
+    let department_id = null;
 
     if (normalizedRole === "student") {
       programme_id = await resolveProgrammeId(programmeIdRaw || programme);
@@ -1042,6 +1065,11 @@ exports.createUser = async (req, res) => {
       });
       if (enrolErr) {
         return res.status(400).json({ success: false, message: enrolErr });
+      }
+    } else {
+      department_id = await resolveDepartmentId(departmentIdRaw);
+      if (departmentIdRaw && !department_id) {
+        return res.status(400).json({ success: false, message: "Selected department was not found" });
       }
     }
 
@@ -1077,6 +1105,7 @@ exports.createUser = async (req, res) => {
           ? normalizeAdmissionNumber(admission_number) || null
           : null,
       programme_id: normalizedRole === "student" ? programme_id : null,
+      department_id: normalizedRole === "student" ? null : department_id,
       year_of_study: normalizedRole === "student" ? year_of_study : null,
       semester: normalizedRole === "student" ? semester : null,
       profile_image: imageFilename,
@@ -1088,7 +1117,7 @@ exports.createUser = async (req, res) => {
 
     const full = await User.findByPk(user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude],
+      include: [programmeInclude, departmentInclude],
     });
 
     return res.status(201).json({ success: true, data: sanitizeUser(full) });
@@ -1122,6 +1151,7 @@ exports.updateUser = async (req, res) => {
       "role",
       "is_public",
       "programme_id",
+      "department_id",
       "year_of_study",
       "semester",
     ];
@@ -1134,6 +1164,14 @@ exports.updateUser = async (req, res) => {
       patch.programme_id = await resolveProgrammeId(req.body.programme);
     } else if (patch.programme_id !== undefined) {
       patch.programme_id = (await resolveProgrammeId(patch.programme_id)) || null;
+    }
+
+    if (patch.department_id !== undefined) {
+      const resolvedDept = await resolveDepartmentId(patch.department_id);
+      if (patch.department_id && !resolvedDept) {
+        return res.status(400).json({ success: false, message: "Selected department was not found" });
+      }
+      patch.department_id = resolvedDept;
     }
 
     if (patch.year_of_study !== undefined) {
@@ -1181,8 +1219,11 @@ exports.updateUser = async (req, res) => {
       patch.programme_id = null;
       patch.year_of_study = null;
       patch.semester = null;
-    } else if (patch.admission_number !== undefined) {
-      patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
+    } else {
+      patch.department_id = null;
+      if (patch.admission_number !== undefined) {
+        patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
+      }
     }
 
     if (effectiveRole === "student") {
@@ -1236,7 +1277,7 @@ exports.updateUser = async (req, res) => {
     await user.update(patch);
     const full = await User.findByPk(user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude],
+      include: [programmeInclude, departmentInclude],
     });
     return res.json({ success: true, data: sanitizeUser(full) });
   } catch (error) {

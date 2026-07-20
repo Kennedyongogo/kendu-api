@@ -9,6 +9,7 @@ const {
   FeePaymentAllocation,
 } = require("../models");
 const mpesa = require("../services/mpesaService");
+const { generateFeePaymentReceiptPdf } = require("../services/feeReceiptPdfService");
 
 const money = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -235,6 +236,50 @@ exports.getMyLedger = async (req, res) => {
   try {
     const data = await buildLedger(req.userId);
     return res.json({ success: true, data });
+  } catch (error) {
+    return res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
+  }
+};
+
+exports.downloadMyPaymentReceipt = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Students only" });
+    }
+
+    const payment = await FeePayment.findOne({
+      where: {
+        id: req.params.paymentId,
+        student_id: req.userId,
+      },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ success: false, message: "Payment record not found" });
+    }
+
+    if (payment.status !== "confirmed") {
+      return res.status(400).json({
+        success: false,
+        message: "Receipt is available only for confirmed payments",
+      });
+    }
+
+    const ledger = await buildLedger(req.userId);
+    const pdfBuffer = await generateFeePaymentReceiptPdf({
+      payment: payment.get({ plain: true }),
+      student: ledger.student,
+      summary: ledger.summary,
+    });
+
+    const receiptNo = payment.provider_receipt || payment.reference || payment.id;
+    const filename = `KASMS-Receipt-${receiptNo}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(pdfBuffer);
   } catch (error) {
     return res
       .status(error.status || 500)
@@ -704,3 +749,4 @@ exports.getAccountingDashboard = async (req, res) => {
 
 module.exports.ensureStudentCharges = ensureStudentCharges;
 module.exports.allocateConfirmedPayment = allocateConfirmedPayment;
+module.exports.buildLedger = buildLedger;

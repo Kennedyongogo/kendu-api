@@ -19,6 +19,10 @@ const auditTrailRoutes = require("./routes/auditTrailRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const accountingRoutes = require("./routes/accountingRoutes");
 const timetableRoutes = require("./routes/timetableRoutes");
+const departmentRoutes = require("./routes/departmentRoutes");
+const unitRoutes = require("./routes/unitRoutes");
+const accessRoutes = require("./routes/accessRoutes");
+const mealRoutes = require("./routes/mealRoutes");
 
 const app = express();
 
@@ -88,6 +92,10 @@ app.use("/api/audit-trail", auditTrailRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/timetable", timetableRoutes);
+app.use("/api/departments", departmentRoutes);
+app.use("/api/units", unitRoutes);
+app.use("/api/access", accessRoutes);
+app.use("/api/meals", mealRoutes);
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {

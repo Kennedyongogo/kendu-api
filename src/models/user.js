@@ -45,6 +45,11 @@ module.exports = (sequelize) => {
         allowNull: true,
         comment: "Programme the student is enrolled in",
       },
+      department_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: "Department for staff/admin users",
+      },
       year_of_study: {
         type: DataTypes.INTEGER,
         allowNull: true,

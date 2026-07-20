@@ -7,6 +7,8 @@
     "start": "nodemon src/server.js",
     "start:cluster": "node src/cluster.js",
     "backfill:placement-register": "node scripts/backfillPlacementRegister.js",
+    "seed:departments": "node scripts/seedDepartments.js",
+    "seed:staff-units": "node scripts/seedStaffUnits.js",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "author": "kennedy ongongo",

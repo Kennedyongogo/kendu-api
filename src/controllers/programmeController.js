@@ -7,6 +7,8 @@ const {
   ProgrammeModule,
   ProgrammeFee,
   ProgrammeSubjectRequirement,
+  Department,
+  ProgrammeDepartment,
   sequelize,
 } = require("../models");
 const { logFromRequest } = require("../middleware/auditLogger");
@@ -97,6 +99,17 @@ function serializeProgramme(row) {
   const fees = Array.isArray(plain.fee_structure) ? plain.fee_structure : [];
   plain.total_fee = fees.reduce((sum, fee) => sum + toMoney(fee.amount), 0);
   plain.fee_currency = fees[0]?.currency || "KES";
+
+  const departments = Array.isArray(plain.departments) ? plain.departments : [];
+  plain.departments = departments.map((d) => ({
+    id: d.id,
+    name: d.name,
+    code: d.code,
+    is_active: d.is_active,
+  }));
+  plain.department_ids = plain.departments.map((d) => d.id);
+  // Convenience for older UI that expected a single department
+  plain.department = plain.departments[0] || null;
 
   return plain;
 }
@@ -322,9 +335,82 @@ const subjectRequirementInclude = {
   ],
 };
 
+const departmentsInclude = {
+  model: Department,
+  as: "departments",
+  attributes: ["id", "name", "code", "is_active"],
+  through: { attributes: [] },
+  required: false,
+};
+
+function parseDepartmentIds(body) {
+  const raw =
+    body.department_ids !== undefined
+      ? body.department_ids
+      : body.department_id !== undefined
+        ? body.department_id
+        : undefined;
+  if (raw === undefined) return undefined;
+
+  let list = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      list = JSON.parse(trimmed);
+    } catch {
+      list = trimmed.split(/[,|]/).map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  if (!Array.isArray(list)) list = [list];
+
+  const ids = [
+    ...new Set(
+      list
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  return ids;
+}
+
+async function assertDepartmentsExist(departmentIds) {
+  if (!departmentIds.length) return [];
+  const rows = await Department.findAll({
+    where: { id: departmentIds },
+    attributes: ["id"],
+  });
+  if (rows.length !== departmentIds.length) {
+    const err = new Error("One or more selected departments were not found");
+    err.status = 400;
+    throw err;
+  }
+  return departmentIds;
+}
+
+async function setProgrammeDepartments(programme, departmentIds, transaction) {
+  if (typeof programme.setDepartments === "function") {
+    await programme.setDepartments(departmentIds, { transaction });
+    return;
+  }
+  await ProgrammeDepartment.destroy({
+    where: { programme_id: programme.id },
+    transaction,
+  });
+  if (!departmentIds.length) return;
+  await ProgrammeDepartment.bulkCreate(
+    departmentIds.map((department_id) => ({
+      programme_id: programme.id,
+      department_id,
+    })),
+    { transaction }
+  );
+}
+
 async function loadProgrammeWithChildren(id) {
   return Programme.findByPk(id, {
     include: [
+      departmentsInclude,
       {
         model: ProgrammeHourDistribution,
         as: "hour_distributions",
@@ -362,26 +448,10 @@ exports.listProgrammes = async (req, res) => {
     if (req.query.category) where.category = req.query.category;
     if (req.query.mode) where.mode = req.query.mode;
 
-    const q = String(req.query.search || req.query.q || "").trim();
-    if (q) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${q}%` } },
-        { award: { [Op.iLike]: `%${q}%` } },
-        { category: { [Op.iLike]: `%${q}%` } },
-        { description: { [Op.iLike]: `%${q}%` } },
-        { minimum_kcse_grade: { [Op.iLike]: `%${q}%` } },
-      ];
-    }
-
-    const includeChildren = String(req.query.include) === "children";
-
-    const { count, rows } = await Programme.findAndCountAll({
-      where,
-      order: [["created_at", "DESC"]],
-      limit,
-      offset,
-      distinct: true,
-      include: includeChildren
+    const departmentFilter = String(req.query.department_id || "").trim();
+    const include = [
+      departmentsInclude,
+      ...(String(req.query.include) === "children"
         ? [
             {
               model: ProgrammeHourDistribution,
@@ -398,7 +468,35 @@ exports.listProgrammes = async (req, res) => {
             feeInclude,
             subjectRequirementInclude,
           ]
-        : undefined,
+        : []),
+    ];
+
+    if (departmentFilter) {
+      include[0] = {
+        ...departmentsInclude,
+        where: { id: departmentFilter },
+        required: true,
+      };
+    }
+
+    const q = String(req.query.search || req.query.q || "").trim();
+    if (q) {
+      where[Op.or] = [
+        { name: { [Op.iLike]: `%${q}%` } },
+        { award: { [Op.iLike]: `%${q}%` } },
+        { category: { [Op.iLike]: `%${q}%` } },
+        { description: { [Op.iLike]: `%${q}%` } },
+        { minimum_kcse_grade: { [Op.iLike]: `%${q}%` } },
+      ];
+    }
+
+    const { count, rows } = await Programme.findAndCountAll({
+      where,
+      order: [["created_at", "DESC"]],
+      limit,
+      offset,
+      distinct: true,
+      include,
     });
 
     return res.json({
@@ -538,7 +636,18 @@ exports.createProgramme = async (req, res) => {
     payload.image = req.file?.filename || req.body.image || null;
     if (payload.is_active === undefined) payload.is_active = true;
 
+    const departmentIdsRaw = parseDepartmentIds(req.body);
+    const departmentIds = await assertDepartmentsExist(departmentIdsRaw || []);
+    if (!departmentIds.length) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Select at least one department for this programme",
+      });
+    }
+
     const programme = await Programme.create(payload, { transaction });
+    await setProgrammeDepartments(programme, departmentIds, transaction);
 
     const hourRows = parseMaybeJson(req.body.hour_distributions);
     const moduleRows = parseMaybeJson(req.body.modules);
@@ -597,6 +706,19 @@ exports.updateProgramme = async (req, res) => {
       return res.status(400).json({ success: false, message: "name cannot be empty" });
     }
 
+    const departmentIdsRaw = parseDepartmentIds(req.body);
+    let departmentIds;
+    if (departmentIdsRaw !== undefined) {
+      departmentIds = await assertDepartmentsExist(departmentIdsRaw);
+      if (!departmentIds.length) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Select at least one department for this programme",
+        });
+      }
+    }
+
     if (req.file?.filename) {
       if (programme.image) {
         const oldPath = path.join(__dirname, "..", "..", "uploads", "programmes", programme.image);
@@ -618,6 +740,10 @@ exports.updateProgramme = async (req, res) => {
     }
 
     await programme.update(patch, { transaction });
+
+    if (departmentIds !== undefined) {
+      await setProgrammeDepartments(programme, departmentIds, transaction);
+    }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "hour_distributions")) {
       const hourRows = parseMaybeJson(req.body.hour_distributions);

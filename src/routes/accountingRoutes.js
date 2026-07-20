@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getMyLedger,
+  downloadMyPaymentReceipt,
   initiateMyPayment,
   mpesaCallback,
   getStudentLedger,
@@ -28,6 +29,12 @@ router.get(
   authenticateUser,
   authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES),
   getMyLedger
+);
+router.get(
+  "/me/payments/:paymentId/receipt",
+  authenticateUser,
+  authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES),
+  downloadMyPaymentReceipt
 );
 router.post(
   "/me/pay",
