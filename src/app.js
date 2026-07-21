@@ -23,6 +23,7 @@ const departmentRoutes = require("./routes/departmentRoutes");
 const unitRoutes = require("./routes/unitRoutes");
 const accessRoutes = require("./routes/accessRoutes");
 const mealRoutes = require("./routes/mealRoutes");
+const announcementRoutes = require("./routes/announcementRoutes");
 
 const app = express();
 
@@ -54,6 +55,12 @@ if (!fs.existsSync(musicUploadPath)) {
   fs.mkdirSync(musicUploadPath, { recursive: true });
 }
 app.use("/uploads/music", express.static(musicUploadPath));
+
+const announcementsUploadPath = path.join(__dirname, "..", "uploads", "announcements");
+if (!fs.existsSync(announcementsUploadPath)) {
+  fs.mkdirSync(announcementsUploadPath, { recursive: true });
+}
+app.use("/uploads/announcements", express.static(announcementsUploadPath));
 
 app.use("/api/users", userRoutes);
 // Programmes + nested hour-distributions, modules, fees, subject-requirements
@@ -96,6 +103,12 @@ app.use("/api/departments", departmentRoutes);
 app.use("/api/units", unitRoutes);
 app.use("/api/access", accessRoutes);
 app.use("/api/meals", mealRoutes);
+// Announcements / News & Events
+// GET /api/announcements/public          (public site, before login)
+// GET /api/announcements/public/:slug    (single public post)
+// GET /api/announcements/student         (student portal, authenticated)
+// GET/POST/PUT/DELETE /api/announcements  (admin manage; staff read-only)
+app.use("/api/announcements", announcementRoutes);
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {

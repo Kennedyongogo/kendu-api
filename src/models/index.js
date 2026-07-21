@@ -19,6 +19,7 @@ const TimetableEntry = require("./timetableEntry")(sequelize);
 const Unit = require("./unit")(sequelize);
 const StudentUnitRegistration = require("./studentUnitRegistration")(sequelize);
 const AccessPolicy = require("./accessPolicy")(sequelize);
+const Announcement = require("./announcement")(sequelize);
 
 const models = {
   User,
@@ -39,6 +40,7 @@ const models = {
   Unit,
   StudentUnitRegistration,
   AccessPolicy,
+  Announcement,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -87,6 +89,7 @@ const initializeModels = async () => {
     await Unit.sync({ force: false, alter: true });
     await StudentUnitRegistration.sync({ force: false, alter: true });
     await AccessPolicy.sync({ force: false, alter: true });
+    await Announcement.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -327,6 +330,15 @@ const setupAssociations = () => {
     models.AccessPolicy.belongsTo(models.User, {
       foreignKey: "updated_by",
       as: "updater",
+    });
+
+    models.Announcement.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "author",
+    });
+    models.User.hasMany(models.Announcement, {
+      foreignKey: "created_by",
+      as: "announcements",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
