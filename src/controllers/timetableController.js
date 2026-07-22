@@ -85,6 +85,12 @@ async function validatePayload(body) {
   if (!CATEGORIES.includes(category)) {
     return { error: "Category must be one of: class, cat, exam" };
   }
+  if (category === "exam") {
+    return {
+      error:
+        "Exams are managed under Exam Timetables. Create a programme exam plan there instead of a single timetable exam entry.",
+    };
+  }
   if (!startsAt) return { error: "A valid start date and time is required" };
   if (!endsAt) return { error: "A valid end date and time is required" };
   if (endsAt <= startsAt) return { error: "End must be after the start" };

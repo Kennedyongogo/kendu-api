@@ -24,6 +24,7 @@ const unitRoutes = require("./routes/unitRoutes");
 const accessRoutes = require("./routes/accessRoutes");
 const mealRoutes = require("./routes/mealRoutes");
 const announcementRoutes = require("./routes/announcementRoutes");
+const examTimetableRoutes = require("./routes/examTimetableRoutes");
 
 const app = express();
 
@@ -109,6 +110,12 @@ app.use("/api/meals", mealRoutes);
 // GET /api/announcements/student         (student portal, authenticated)
 // GET/POST/PUT/DELETE /api/announcements  (admin manage; staff read-only)
 app.use("/api/announcements", announcementRoutes);
+// Exam timetables (per programme / year / semester / academic year)
+// GET/POST /api/exam-timetables
+// GET/PUT/DELETE /api/exam-timetables/:id
+// POST /api/exam-timetables/:id/submit|approve|reject
+// POST/PUT/DELETE /api/exam-timetables/:id/slots[/:slotId]
+app.use("/api/exam-timetables", examTimetableRoutes);
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {

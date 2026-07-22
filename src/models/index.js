@@ -20,6 +20,8 @@ const Unit = require("./unit")(sequelize);
 const StudentUnitRegistration = require("./studentUnitRegistration")(sequelize);
 const AccessPolicy = require("./accessPolicy")(sequelize);
 const Announcement = require("./announcement")(sequelize);
+const ExamPeriod = require("./examPeriod")(sequelize);
+const ExamSlot = require("./examSlot")(sequelize);
 
 const models = {
   User,
@@ -41,6 +43,8 @@ const models = {
   StudentUnitRegistration,
   AccessPolicy,
   Announcement,
+  ExamPeriod,
+  ExamSlot,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -90,6 +94,8 @@ const initializeModels = async () => {
     await StudentUnitRegistration.sync({ force: false, alter: true });
     await AccessPolicy.sync({ force: false, alter: true });
     await Announcement.sync({ force: false, alter: true });
+    await ExamPeriod.sync({ force: false, alter: true });
+    await ExamSlot.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -339,6 +345,45 @@ const setupAssociations = () => {
     models.User.hasMany(models.Announcement, {
       foreignKey: "created_by",
       as: "announcements",
+    });
+
+    models.ExamPeriod.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.ExamPeriod, {
+      foreignKey: "programme_id",
+      as: "exam_periods",
+      onDelete: "RESTRICT",
+    });
+    models.ExamPeriod.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.ExamPeriod.belongsTo(models.User, {
+      foreignKey: "submitted_by",
+      as: "submitter",
+    });
+    models.ExamPeriod.belongsTo(models.User, {
+      foreignKey: "approved_by",
+      as: "approver",
+    });
+    models.ExamPeriod.hasMany(models.ExamSlot, {
+      foreignKey: "exam_period_id",
+      as: "slots",
+      onDelete: "CASCADE",
+    });
+    models.ExamSlot.belongsTo(models.ExamPeriod, {
+      foreignKey: "exam_period_id",
+      as: "period",
+    });
+    models.ExamSlot.belongsTo(models.Unit, {
+      foreignKey: "unit_id",
+      as: "unit",
+    });
+    models.ExamSlot.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
