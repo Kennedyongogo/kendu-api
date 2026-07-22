@@ -22,6 +22,7 @@ const AccessPolicy = require("./accessPolicy")(sequelize);
 const Announcement = require("./announcement")(sequelize);
 const ExamPeriod = require("./examPeriod")(sequelize);
 const ExamSlot = require("./examSlot")(sequelize);
+const StudentAcademicHistory = require("./studentAcademicHistory")(sequelize);
 
 const models = {
   User,
@@ -45,6 +46,7 @@ const models = {
   Announcement,
   ExamPeriod,
   ExamSlot,
+  StudentAcademicHistory,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -96,6 +98,7 @@ const initializeModels = async () => {
     await Announcement.sync({ force: false, alter: true });
     await ExamPeriod.sync({ force: false, alter: true });
     await ExamSlot.sync({ force: false, alter: true });
+    await StudentAcademicHistory.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -384,6 +387,33 @@ const setupAssociations = () => {
     models.ExamSlot.belongsTo(models.User, {
       foreignKey: "created_by",
       as: "creator",
+    });
+
+    models.StudentAcademicHistory.belongsTo(models.User, {
+      foreignKey: "student_id",
+      as: "student",
+    });
+    models.User.hasMany(models.StudentAcademicHistory, {
+      foreignKey: "student_id",
+      as: "academic_histories",
+      onDelete: "CASCADE",
+    });
+    models.StudentAcademicHistory.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.StudentAcademicHistory, {
+      foreignKey: "programme_id",
+      as: "academic_histories",
+      onDelete: "RESTRICT",
+    });
+    models.StudentAcademicHistory.belongsTo(models.User, {
+      foreignKey: "moved_by_user_id",
+      as: "moved_by_user",
+    });
+    models.StudentAcademicHistory.belongsTo(models.StudentAcademicHistory, {
+      foreignKey: "previous_history_id",
+      as: "previous_history",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);

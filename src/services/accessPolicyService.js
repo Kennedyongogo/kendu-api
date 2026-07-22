@@ -111,7 +111,7 @@ async function evaluateFeatureAccess(feature, feeSummary) {
     feature === "meals"
       ? "download your meal card"
       : feature === "exams"
-        ? "access exams"
+        ? "download your exam card"
         : "enroll in units";
 
   return {

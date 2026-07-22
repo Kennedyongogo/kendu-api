@@ -14,6 +14,7 @@ const {
   downloadPeriodPdf,
   getMyExamTimetable,
   downloadMyExamTimetablePdf,
+  downloadMyExamCardPdf,
 } = require("../controllers/examTimetableController");
 const {
   authenticateUser,
@@ -33,6 +34,7 @@ const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROL
 // Exam periods (plans)
 router.get("/me", ...studentsOnly, getMyExamTimetable);
 router.get("/me/pdf", ...studentsOnly, downloadMyExamTimetablePdf);
+router.get("/me/card/pdf", ...studentsOnly, downloadMyExamCardPdf);
 router.get("/", ...canManage, listPeriods);
 router.post("/", ...canManage, createPeriod);
 router.get("/:id/pdf", ...canManage, downloadPeriodPdf);

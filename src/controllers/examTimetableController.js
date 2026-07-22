@@ -9,6 +9,9 @@ const {
   TimetableEntry,
 } = require("../models");
 const { generateExamTimetablePdf } = require("../services/examTimetablePdfService");
+const { buildExamCardPdf } = require("../services/examCardPdfService");
+const { buildLedger } = require("./accountingController");
+const { evaluateFeatureAccess } = require("../services/accessPolicyService");
 
 const STATUSES = ["draft", "pending", "approved", "rejected"];
 const EDITABLE_STATUSES = ["draft", "rejected"];
@@ -418,6 +421,89 @@ exports.downloadMyExamTimetablePdf = async (req, res) => {
     return res.send(pdfBuffer);
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** GET /api/exam-timetables/me/card/pdf — A4 exam card (fee gate via Access → Exams) */
+exports.downloadMyExamCardPdf = async (req, res) => {
+  try {
+    const ledger = await buildLedger(req.userId);
+    const access = await evaluateFeatureAccess("exams", ledger.summary);
+    if (!access.eligible) {
+      return res.status(403).json({
+        success: false,
+        message: access.message || "Fee requirement not met for exam card",
+        data: { access },
+      });
+    }
+
+    const result = await loadStudentApprovedPeriod(req.userId);
+    if (result.error) {
+      return res.status(result.error.status).json({ success: false, message: result.error.message });
+    }
+    if (!result.period) {
+      return res.status(404).json({ success: false, message: result.message });
+    }
+
+    const student = await User.findByPk(req.userId, {
+      attributes: [
+        "id",
+        "full_name",
+        "admission_number",
+        "profile_image",
+        "year_of_study",
+        "semester",
+        "programme_id",
+      ],
+      include: [
+        {
+          model: Programme,
+          as: "programme",
+          attributes: ["id", "name"],
+          required: false,
+        },
+      ],
+    });
+    if (!student) {
+      return res.status(404).json({ success: false, message: "Student profile not found" });
+    }
+
+    const plain = student.get({ plain: true });
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const academicYear = month >= 7 ? `${year}/${year + 1}` : `${year - 1}/${year}`;
+
+    const period = serializePeriod(result.period, { includeSlots: true });
+    const pdfBuffer = await buildExamCardPdf({
+      student: {
+        full_name: plain.full_name,
+        admission_number: plain.admission_number || null,
+        profile_image: plain.profile_image || null,
+        year_of_study: plain.year_of_study || null,
+        semester: plain.semester || null,
+        programme_name: plain.programme?.name || period.programme_name || null,
+        academic_year: period.academic_year || academicYear,
+        issued_on: now.toLocaleDateString("en-KE", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }),
+      },
+      period,
+    });
+
+    const safeAdm = String(plain.admission_number || plain.id)
+      .replace(/[^\w.-]+/g, "_")
+      .slice(0, 40);
+    const filename = `KASMS-ExamCard-${safeAdm}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+    return res.send(pdfBuffer);
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
   }
 };
 
