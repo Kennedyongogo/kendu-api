@@ -23,6 +23,8 @@ const Announcement = require("./announcement")(sequelize);
 const ExamPeriod = require("./examPeriod")(sequelize);
 const ExamSlot = require("./examSlot")(sequelize);
 const StudentAcademicHistory = require("./studentAcademicHistory")(sequelize);
+const StudentTranscript = require("./studentTranscript")(sequelize);
+const StudentTranscriptLine = require("./studentTranscriptLine")(sequelize);
 
 const models = {
   User,
@@ -47,6 +49,8 @@ const models = {
   ExamPeriod,
   ExamSlot,
   StudentAcademicHistory,
+  StudentTranscript,
+  StudentTranscriptLine,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -99,6 +103,8 @@ const initializeModels = async () => {
     await ExamPeriod.sync({ force: false, alter: true });
     await ExamSlot.sync({ force: false, alter: true });
     await StudentAcademicHistory.sync({ force: false, alter: true });
+    await StudentTranscript.sync({ force: false, alter: true });
+    await StudentTranscriptLine.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -414,6 +420,50 @@ const setupAssociations = () => {
     models.StudentAcademicHistory.belongsTo(models.StudentAcademicHistory, {
       foreignKey: "previous_history_id",
       as: "previous_history",
+    });
+
+    models.StudentTranscript.belongsTo(models.User, {
+      foreignKey: "student_id",
+      as: "student",
+    });
+    models.User.hasMany(models.StudentTranscript, {
+      foreignKey: "student_id",
+      as: "transcripts",
+      onDelete: "CASCADE",
+    });
+    models.StudentTranscript.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.StudentTranscript, {
+      foreignKey: "programme_id",
+      as: "transcripts",
+      onDelete: "RESTRICT",
+    });
+    models.StudentTranscript.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.StudentTranscript.belongsTo(models.User, {
+      foreignKey: "issued_by",
+      as: "issuer",
+    });
+    models.StudentTranscript.hasMany(models.StudentTranscriptLine, {
+      foreignKey: "transcript_id",
+      as: "lines",
+      onDelete: "CASCADE",
+    });
+    models.StudentTranscriptLine.belongsTo(models.StudentTranscript, {
+      foreignKey: "transcript_id",
+      as: "transcript",
+    });
+    models.StudentTranscriptLine.belongsTo(models.Unit, {
+      foreignKey: "unit_id",
+      as: "unit",
+    });
+    models.StudentTranscriptLine.belongsTo(models.StudentUnitRegistration, {
+      foreignKey: "registration_id",
+      as: "registration",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);

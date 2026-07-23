@@ -117,6 +117,7 @@ app.use("/api/announcements", announcementRoutes);
 // POST/PUT/DELETE /api/exam-timetables/:id/slots[/:slotId]
 app.use("/api/exam-timetables", examTimetableRoutes);
 app.use("/api/cohort-transfer", require("./routes/cohortTransferRoutes"));
+app.use("/api/transcripts", require("./routes/transcriptRoutes"));
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {
