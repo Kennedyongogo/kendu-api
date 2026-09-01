@@ -25,6 +25,7 @@ const accessRoutes = require("./routes/accessRoutes");
 const mealRoutes = require("./routes/mealRoutes");
 const announcementRoutes = require("./routes/announcementRoutes");
 const examTimetableRoutes = require("./routes/examTimetableRoutes");
+const staffCommonsRoutes = require("./routes/staffCommonsRoutes");
 
 const app = express();
 
@@ -62,6 +63,12 @@ if (!fs.existsSync(announcementsUploadPath)) {
   fs.mkdirSync(announcementsUploadPath, { recursive: true });
 }
 app.use("/uploads/announcements", express.static(announcementsUploadPath));
+
+const staffCommonsUploadPath = path.join(__dirname, "..", "uploads", "staff-commons");
+if (!fs.existsSync(staffCommonsUploadPath)) {
+  fs.mkdirSync(staffCommonsUploadPath, { recursive: true });
+}
+app.use("/uploads/staff-commons", express.static(staffCommonsUploadPath));
 
 app.use("/api/users", userRoutes);
 // Programmes + nested hour-distributions, modules, fees, subject-requirements
@@ -104,6 +111,7 @@ app.use("/api/departments", departmentRoutes);
 app.use("/api/units", unitRoutes);
 app.use("/api/access", accessRoutes);
 app.use("/api/meals", mealRoutes);
+app.use("/api/staff-commons", staffCommonsRoutes);
 // Announcements / News & Events
 // GET /api/announcements/public          (public site, before login)
 // GET /api/announcements/public/:slug    (single public post)

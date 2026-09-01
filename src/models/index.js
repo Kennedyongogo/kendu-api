@@ -25,6 +25,11 @@ const ExamSlot = require("./examSlot")(sequelize);
 const StudentAcademicHistory = require("./studentAcademicHistory")(sequelize);
 const StudentTranscript = require("./studentTranscript")(sequelize);
 const StudentTranscriptLine = require("./studentTranscriptLine")(sequelize);
+const StaffBriefing = require("./staffBriefing")(sequelize);
+const StaffBriefingAttachment = require("./staffBriefingAttachment")(sequelize);
+const StaffBriefingRead = require("./staffBriefingRead")(sequelize);
+const StaffChannel = require("./staffChannel")(sequelize);
+const StaffChannelMessage = require("./staffChannelMessage")(sequelize);
 
 const models = {
   User,
@@ -51,6 +56,11 @@ const models = {
   StudentAcademicHistory,
   StudentTranscript,
   StudentTranscriptLine,
+  StaffBriefing,
+  StaffBriefingAttachment,
+  StaffBriefingRead,
+  StaffChannel,
+  StaffChannelMessage,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -105,6 +115,11 @@ const initializeModels = async () => {
     await StudentAcademicHistory.sync({ force: false, alter: true });
     await StudentTranscript.sync({ force: false, alter: true });
     await StudentTranscriptLine.sync({ force: false, alter: true });
+    await StaffBriefing.sync({ force: false, alter: true });
+    await StaffBriefingAttachment.sync({ force: false, alter: true });
+    await StaffBriefingRead.sync({ force: false, alter: true });
+    await StaffChannel.sync({ force: false, alter: true });
+    await StaffChannelMessage.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -464,6 +479,71 @@ const setupAssociations = () => {
     models.StudentTranscriptLine.belongsTo(models.StudentUnitRegistration, {
       foreignKey: "registration_id",
       as: "registration",
+    });
+
+    models.StaffBriefing.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "author",
+    });
+    models.User.hasMany(models.StaffBriefing, {
+      foreignKey: "created_by",
+      as: "staff_briefings",
+    });
+    models.StaffBriefing.belongsTo(models.Department, {
+      foreignKey: "department_id",
+      as: "department",
+    });
+    models.Department.hasMany(models.StaffBriefing, {
+      foreignKey: "department_id",
+      as: "staff_briefings",
+    });
+    models.StaffBriefing.hasMany(models.StaffBriefingAttachment, {
+      foreignKey: "briefing_id",
+      as: "attachments",
+      onDelete: "CASCADE",
+    });
+    models.StaffBriefingAttachment.belongsTo(models.StaffBriefing, {
+      foreignKey: "briefing_id",
+      as: "briefing",
+    });
+    models.StaffBriefing.hasMany(models.StaffBriefingRead, {
+      foreignKey: "briefing_id",
+      as: "reads",
+      onDelete: "CASCADE",
+    });
+    models.StaffBriefingRead.belongsTo(models.StaffBriefing, {
+      foreignKey: "briefing_id",
+      as: "briefing",
+    });
+    models.StaffBriefingRead.belongsTo(models.User, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+
+    models.StaffChannel.belongsTo(models.Department, {
+      foreignKey: "department_id",
+      as: "department",
+    });
+    models.Department.hasMany(models.StaffChannel, {
+      foreignKey: "department_id",
+      as: "staff_channels",
+    });
+    models.StaffChannel.hasMany(models.StaffChannelMessage, {
+      foreignKey: "channel_id",
+      as: "messages",
+      onDelete: "CASCADE",
+    });
+    models.StaffChannelMessage.belongsTo(models.StaffChannel, {
+      foreignKey: "channel_id",
+      as: "channel",
+    });
+    models.StaffChannelMessage.belongsTo(models.User, {
+      foreignKey: "user_id",
+      as: "author",
+    });
+    models.User.hasMany(models.StaffChannelMessage, {
+      foreignKey: "user_id",
+      as: "staff_channel_messages",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
