@@ -17,7 +17,8 @@ const FEATURE_DEFAULTS = {
   exams: {
     min_fee_percent: 0,
     is_enabled: false,
-    description: "Fee share required before sitting exams / downloading an exam card.",
+    description:
+      "Fee share required before viewing/downloading the exam timetable and exam card.",
   },
 };
 
@@ -111,7 +112,7 @@ async function evaluateFeatureAccess(feature, feeSummary) {
     feature === "meals"
       ? "download your meal card"
       : feature === "exams"
-        ? "download your exam card"
+        ? "view and download your exam timetable"
         : "enroll in units";
 
   return {

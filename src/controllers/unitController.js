@@ -787,18 +787,29 @@ exports.listAssignableProgrammes = async (req, res) => {
     });
 
     const programmeIds = rows.map((r) => r.id);
-    const unitWhere = { programme_id: { [Op.in]: programmeIds.length ? programmeIds : ["00000000-0000-0000-0000-000000000000"] } };
-    if (departmentId) unitWhere.department_id = departmentId;
+    // Count by programme only — programmes are already scoped via department links.
+    // Filtering units by department_id here zeroed gallery stats when a unit's
+    // department_id differed from the filter (common for multi-dept programmes).
+    const unitWhere = {
+      programme_id: {
+        [Op.in]: programmeIds.length ? programmeIds : ["00000000-0000-0000-0000-000000000000"],
+      },
+    };
 
     const unitRows = programmeIds.length
       ? await Unit.findAll({
           where: unitWhere,
-          attributes: ["programme_id", "status"],
+          attributes: ["programme_id", "status", "department_id"],
         })
       : [];
 
     const countsByProgramme = {};
     for (const u of unitRows) {
+      // When department-scoped, prefer units owned by that department, but if none
+      // match yet still show programme-wide totals so the gallery isn't empty.
+      if (departmentId && u.department_id && u.department_id !== departmentId) {
+        continue;
+      }
       const pid = u.programme_id;
       if (!countsByProgramme[pid]) {
         countsByProgramme[pid] = { total: 0, draft: 0, pending: 0, approved: 0, rejected: 0 };
@@ -807,15 +818,25 @@ exports.listAssignableProgrammes = async (req, res) => {
       if (countsByProgramme[pid][u.status] != null) countsByProgramme[pid][u.status] += 1;
     }
 
+    // Fallback: if a programme has units but none matched the department filter, use all
+    const allByProgramme = {};
+    for (const u of unitRows) {
+      const pid = u.programme_id;
+      if (!allByProgramme[pid]) {
+        allByProgramme[pid] = { total: 0, draft: 0, pending: 0, approved: 0, rejected: 0 };
+      }
+      allByProgramme[pid].total += 1;
+      if (allByProgramme[pid][u.status] != null) allByProgramme[pid][u.status] += 1;
+    }
+
     const data = rows.map((row) => {
       const plain = row.get({ plain: true });
-      plain.unit_counts = countsByProgramme[row.id] || {
-        total: 0,
-        draft: 0,
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-      };
+      const scoped = countsByProgramme[row.id];
+      const fallback = allByProgramme[row.id];
+      plain.unit_counts =
+        scoped && scoped.total > 0
+          ? scoped
+          : fallback || { total: 0, draft: 0, pending: 0, approved: 0, rejected: 0 };
       return plain;
     });
 

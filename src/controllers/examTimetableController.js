@@ -381,13 +381,33 @@ exports.getMyExamTimetable = async (req, res) => {
     if (result.error) {
       return res.status(result.error.status).json({ success: false, message: result.error.message });
     }
-    if (!result.period) {
-      return res.json({ success: true, data: null, message: result.message });
+
+    let access = null;
+    try {
+      const ledger = await buildLedger(req.userId);
+      access = await evaluateFeatureAccess("exams", ledger.summary);
+    } catch {
+      access = null;
     }
+
+    if (!result.period) {
+      return res.json({
+        success: true,
+        data: { access, period: null, locked_period: null },
+        message: result.message,
+      });
+    }
+
+    const period = serializePeriod(result.period, { includeSlots: true });
+    const eligible = !access || access.eligible === true;
 
     return res.json({
       success: true,
-      data: serializePeriod(result.period, { includeSlots: true }),
+      data: {
+        access,
+        period: eligible ? period : null,
+        locked_period: period,
+      },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -396,6 +416,16 @@ exports.getMyExamTimetable = async (req, res) => {
 
 exports.downloadMyExamTimetablePdf = async (req, res) => {
   try {
+    const ledger = await buildLedger(req.userId);
+    const access = await evaluateFeatureAccess("exams", ledger.summary);
+    if (!access.eligible) {
+      return res.status(403).json({
+        success: false,
+        message: access.message || "Fee requirement not met for exam timetable",
+        data: { access },
+      });
+    }
+
     const result = await loadStudentApprovedPeriod(req.userId);
     if (result.error) {
       return res.status(result.error.status).json({ success: false, message: result.error.message });

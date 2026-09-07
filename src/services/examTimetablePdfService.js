@@ -207,29 +207,45 @@ function drawPlanSummary(doc, y, period) {
 }
 
 function drawSlotCard(doc, x, y, width, slot, index) {
-  const cardH = 58;
+  const cardH = 56;
+  const sigW = 118;
+  const sigGap = 10;
+  const contentW = width - sigW - sigGap - 8;
+
   doc.roundedRect(x, y, width, cardH, 8).fillAndStroke("#f7faf8", "#d7e3df");
 
   const parts = slotDateParts(slot.starts_at);
   const dateW = 46;
   if (parts) {
-    doc.roundedRect(x + 8, y + 8, dateW, cardH - 16, 6).lineWidth(0.8).stroke("#c5d9d3");
-    doc.rect(x + 8, y + 8, dateW, 12).fill(BRAND.green);
-    fixedText(doc, parts.month, x + 8, y + 9, dateW, {
+    const bx = x + 8;
+    const by = y + 7;
+    const bh = cardH - 14;
+    const br = 6;
+    const headerH = 14;
+
+    doc.save();
+    doc.roundedRect(bx, by, dateW, bh, br).clip();
+    doc.rect(bx, by, dateW, bh).fill(BRAND.white);
+    doc.rect(bx, by, dateW, headerH).fill(BRAND.green);
+    doc.restore();
+
+    doc.roundedRect(bx, by, dateW, bh, br).lineWidth(0.75).strokeColor("#c5d9d3").stroke();
+
+    fixedText(doc, parts.month, bx, by + 2.5, dateW, {
       height: 10,
       size: 6.5,
       bold: true,
       color: BRAND.white,
       align: "center",
     });
-    fixedText(doc, String(parts.day), x + 8, y + 20, dateW, {
-      height: 16,
-      size: 13,
+    fixedText(doc, String(parts.day), bx, by + 16, dateW, {
+      height: 15,
+      size: 12.5,
       bold: true,
       color: BRAND.navy,
       align: "center",
     });
-    fixedText(doc, parts.weekday, x + 8, y + 38, dateW, {
+    fixedText(doc, parts.weekday, bx, by + 32, dateW, {
       height: 10,
       size: 6,
       color: BRAND.inkMuted,
@@ -238,33 +254,59 @@ function drawSlotCard(doc, x, y, width, slot, index) {
   }
 
   const textX = x + (parts ? 62 : 12);
-  const textW = width - (parts ? 70 : 20);
-  fixedText(doc, `${index + 1}. ${safeText(slot.title, 90)}`, textX, y + 10, textW, {
-    height: 14,
-    size: 8.5,
+  const textW = contentW - (parts ? 62 : 12);
+  fixedText(doc, `${index + 1}. ${safeText(slot.title, 100)}`, textX, y + 9, textW, {
+    height: 13,
+    size: 9,
     bold: true,
     color: BRAND.navy,
   });
-  fixedText(doc, formatDate(slot.starts_at), textX, y + 24, textW, {
+  fixedText(doc, formatDate(slot.starts_at), textX, y + 23, textW * 0.55, {
     height: 11,
     size: 7.5,
     color: BRAND.inkMuted,
   });
-  fixedText(doc, formatTimeRange(slot.starts_at, slot.ends_at), textX, y + 35, textW, {
+  fixedText(doc, formatTimeRange(slot.starts_at, slot.ends_at), textX + textW * 0.55, y + 23, textW * 0.45, {
     height: 11,
     size: 7.5,
     bold: true,
     color: BRAND.greenDark,
+    align: "right",
   });
   if (slot.venue) {
-    fixedText(doc, safeText(slot.venue, 60), textX, y + 46, textW, {
+    fixedText(doc, safeText(slot.venue, 70), textX, y + 36, textW, {
       height: 11,
       size: 7.5,
       color: BRAND.inkMuted,
     });
   }
 
-  return cardH + 8;
+  // Signature box on the far right
+  const sigX = x + width - sigW - 8;
+  const sigY = y + 8;
+  const sigH = cardH - 16;
+  doc.roundedRect(sigX, sigY, sigW, sigH, 6).fillAndStroke(BRAND.white, "#c5d9d3");
+  fixedText(doc, "INVIGILATOR SIGNATURE", sigX + 4, sigY + 4, sigW - 8, {
+    height: 9,
+    size: 5.5,
+    bold: true,
+    color: BRAND.inkMuted,
+    align: "center",
+  });
+  doc
+    .moveTo(sigX + 10, sigY + sigH - 14)
+    .lineTo(sigX + sigW - 10, sigY + sigH - 14)
+    .lineWidth(0.7)
+    .strokeColor("#c5d9d3")
+    .stroke();
+  fixedText(doc, "Sign / stamp", sigX + 4, sigY + sigH - 11, sigW - 8, {
+    height: 8,
+    size: 5.5,
+    color: "#9aa3b5",
+    align: "center",
+  });
+
+  return cardH + 7;
 }
 
 function drawFooter(doc) {
@@ -325,8 +367,6 @@ async function generateExamTimetablePdf(period) {
 
     const left = doc.page.margins.left;
     const width = pageContentWidth(doc);
-    const colGap = 10;
-    const colW = (width - colGap) / 2;
     const bottomLimit = doc.page.height - doc.page.margins.bottom - 48;
 
     fixedText(doc, `EXAM SCHEDULE (${slots.length} paper${slots.length === 1 ? "" : "s"})`, left, y, width, {
@@ -335,7 +375,7 @@ async function generateExamTimetablePdf(period) {
       bold: true,
       color: BRAND.greenDark,
     });
-    y += 18;
+    y += 16;
 
     if (!slots.length) {
       doc.roundedRect(left, y, width, 48, 8).dash(3, { space: 3 }).stroke("#c5d9d3");
@@ -348,19 +388,14 @@ async function generateExamTimetablePdf(period) {
       doc.undash();
     } else {
       slots.forEach((slot, index) => {
-        const col = index % 2;
-        const cardH = 66;
-        if (col === 0 && y + cardH > bottomLimit) {
+        const step = 63;
+        if (y + step > bottomLimit) {
           drawFooter(doc);
           doc.addPage();
           y = drawPageHeader(doc, period);
           y += 8;
         }
-        const x = left + col * (colW + colGap);
-        drawSlotCard(doc, x, y, colW, slot, index);
-        if (col === 1 || index === slots.length - 1) {
-          y += cardH;
-        }
+        y += drawSlotCard(doc, left, y, width, slot, index);
       });
     }
 
