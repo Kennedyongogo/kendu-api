@@ -647,6 +647,109 @@ exports.getPdf = async (req, res) => {
   }
 };
 
+async function assertOwnIssuedTranscript(req, id) {
+  if (req.user?.role !== "student") {
+    throw httpError(403, "Access denied");
+  }
+  const transcript = await loadTranscript(id);
+  if (transcript.student_id !== req.userId) {
+    throw httpError(403, "Access denied");
+  }
+  if (transcript.status !== "issued") {
+    throw httpError(404, "Transcript not available yet.");
+  }
+  return transcript;
+}
+
+/** GET /api/transcripts/me — issued transcripts for the logged-in student */
+exports.listMine = async (req, res) => {
+  try {
+    if (req.user?.role !== "student") {
+      throw httpError(403, "Access denied");
+    }
+    const studentId = req.userId;
+    await loadStudent(studentId);
+    const rows = await StudentTranscript.findAll({
+      where: { student_id: studentId, status: "issued" },
+      include: [
+        {
+          model: StudentTranscriptLine,
+          as: "lines",
+          attributes: ["id"],
+        },
+        {
+          model: Programme,
+          as: "programme",
+          attributes: ["id", "name"],
+        },
+      ],
+      order: [
+        ["academic_year", "DESC"],
+        ["year_of_study", "DESC"],
+        ["semester", "DESC"],
+        ["issued_at", "DESC"],
+        ["created_at", "DESC"],
+      ],
+    });
+
+    return res.json({
+      success: true,
+      data: rows.map((row) => {
+        const plain = row.get({ plain: true });
+        return {
+          id: plain.id,
+          programme_id: plain.programme_id,
+          programme_name: plain.programme?.name || null,
+          year_of_study: plain.year_of_study,
+          semester: plain.semester,
+          academic_year: plain.academic_year,
+          status: plain.status,
+          recommendation: plain.recommendation,
+          line_count: plain.lines?.length || 0,
+          issued_at: plain.issued_at,
+          updated_at: plain.updated_at,
+          created_at: plain.created_at,
+        };
+      }),
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/** GET /api/transcripts/me/:id — full issued transcript for the logged-in student */
+exports.getMine = async (req, res) => {
+  try {
+    const id = normalizeUuid(req.params.id, "id");
+    const transcript = await assertOwnIssuedTranscript(req, id);
+    return res.json({ success: true, data: mapTranscriptResponse(transcript) });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/** GET /api/transcripts/me/:id/pdf — download/view issued transcript PDF */
+exports.getMinePdf = async (req, res) => {
+  try {
+    const id = normalizeUuid(req.params.id, "id");
+    const transcript = await assertOwnIssuedTranscript(req, id);
+    const plain = mapTranscriptResponse(transcript);
+    const admission = plain.student?.admission_number || "student";
+    return sendPdf(
+      res,
+      {
+        student: plain.student,
+        programme: plain.programme,
+        transcript: plain,
+        lines: plain.lines,
+      },
+      `transcript-${admission}-${plain.academic_year.replace("/", "-")}.pdf`
+    );
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
 /**
  * Live PDF preview without saving.
  * POST /api/transcripts/preview
