@@ -30,6 +30,11 @@ const StaffBriefingAttachment = require("./staffBriefingAttachment")(sequelize);
 const StaffBriefingRead = require("./staffBriefingRead")(sequelize);
 const StaffChannel = require("./staffChannel")(sequelize);
 const StaffChannelMessage = require("./staffChannelMessage")(sequelize);
+const LibraryBook = require("./libraryBook")(sequelize);
+const LibraryRule = require("./libraryRule")(sequelize);
+const LibraryLoan = require("./libraryLoan")(sequelize);
+const LibraryElearning = require("./libraryElearning")(sequelize);
+const LibraryService = require("./libraryService")(sequelize);
 
 const models = {
   User,
@@ -61,6 +66,11 @@ const models = {
   StaffBriefingRead,
   StaffChannel,
   StaffChannelMessage,
+  LibraryBook,
+  LibraryRule,
+  LibraryLoan,
+  LibraryElearning,
+  LibraryService,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -120,6 +130,11 @@ const initializeModels = async () => {
     await StaffBriefingRead.sync({ force: false, alter: true });
     await StaffChannel.sync({ force: false, alter: true });
     await StaffChannelMessage.sync({ force: false, alter: true });
+    await LibraryBook.sync({ force: false, alter: true });
+    await LibraryRule.sync({ force: false, alter: true });
+    await LibraryLoan.sync({ force: false, alter: true });
+    await LibraryElearning.sync({ force: false, alter: true });
+    await LibraryService.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -544,6 +559,46 @@ const setupAssociations = () => {
     models.User.hasMany(models.StaffChannelMessage, {
       foreignKey: "user_id",
       as: "staff_channel_messages",
+    });
+
+    models.LibraryBook.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.LibraryBook, {
+      foreignKey: "programme_id",
+      as: "library_books",
+      onDelete: "RESTRICT",
+    });
+    models.LibraryBook.hasMany(models.LibraryLoan, {
+      foreignKey: "book_id",
+      as: "loans",
+      onDelete: "RESTRICT",
+    });
+    models.LibraryLoan.belongsTo(models.LibraryBook, {
+      foreignKey: "book_id",
+      as: "book",
+    });
+    models.LibraryLoan.belongsTo(models.User, {
+      foreignKey: "borrower_id",
+      as: "borrower",
+    });
+    models.User.hasMany(models.LibraryLoan, {
+      foreignKey: "borrower_id",
+      as: "library_loans",
+    });
+    models.LibraryLoan.belongsTo(models.User, {
+      foreignKey: "issued_by",
+      as: "issuer",
+    });
+    models.LibraryElearning.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.LibraryElearning, {
+      foreignKey: "programme_id",
+      as: "library_elearning",
+      onDelete: "SET NULL",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);

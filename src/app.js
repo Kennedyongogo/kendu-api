@@ -126,6 +126,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/exam-timetables", examTimetableRoutes);
 app.use("/api/cohort-transfer", require("./routes/cohortTransferRoutes"));
 app.use("/api/transcripts", require("./routes/transcriptRoutes"));
+app.use("/api/library", require("./routes/libraryRoutes"));
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {
