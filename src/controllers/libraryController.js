@@ -29,6 +29,43 @@ function toNullableString(value) {
   return s || null;
 }
 
+function toNonNegInt(value, label, { max = 365 } = {}) {
+  if (value === undefined || value === null || value === "") return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > max) {
+    throw httpError(400, `${label} must be an integer between 0 and ${max}.`);
+  }
+  return n;
+}
+
+function addDuration(date, { days = 0, hours = 0, minutes = 0 } = {}) {
+  const d = new Date(date);
+  d.setTime(d.getTime() + (((days * 24 + hours) * 60 + minutes) * 60 * 1000));
+  return d;
+}
+
+function resolveLoanDueAt(issuedAt, body) {
+  if (body.due_at) {
+    const due = new Date(body.due_at);
+    if (Number.isNaN(due.getTime())) throw httpError(400, "due_at is invalid.");
+    if (due.getTime() <= issuedAt.getTime()) {
+      throw httpError(400, "Due time must be after the issue time.");
+    }
+    return due;
+  }
+
+  const days = toNonNegInt(body.loan_days ?? body.days, "loan_days", { max: 365 });
+  const hours = toNonNegInt(body.loan_hours ?? body.hours, "loan_hours", { max: 23 });
+  const minutes = toNonNegInt(body.loan_minutes ?? body.minutes, "loan_minutes", { max: 59 });
+
+  const hasDuration = days > 0 || hours > 0 || minutes > 0;
+  const due = addDuration(issuedAt, hasDuration ? { days, hours, minutes } : { days: DEFAULT_LOAN_DAYS });
+  if (due.getTime() <= issuedAt.getTime()) {
+    throw httpError(400, "Loan duration must be greater than zero.");
+  }
+  return due;
+}
+
 function toBool(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
@@ -52,12 +89,6 @@ function uuidOk(value, label) {
     throw httpError(400, `${label} is invalid.`);
   }
   return id;
-}
-
-function addDays(date, days) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + Number(days));
-  return d;
 }
 
 function effectiveLoanStatus(loan) {
@@ -150,6 +181,108 @@ async function markOverdueLoans() {
     }
   );
 }
+
+/** GET /api/library/me — student portal: loans, catalogue, e-learning, rules, services */
+exports.getMyLibrary = async (req, res) => {
+  try {
+    await markOverdueLoans();
+    const borrowerId = req.userId;
+
+    const [loans, books, elearning, rules, services] = await Promise.all([
+      LibraryLoan.findAll({
+        where: {
+          borrower_id: borrowerId,
+          returned_at: null,
+          status: { [Op.in]: ["active", "overdue"] },
+        },
+        include: [
+          {
+            model: LibraryBook,
+            as: "book",
+            attributes: ["id", "title", "author"],
+            required: false,
+          },
+        ],
+        order: [
+          ["due_at", "ASC"],
+          ["issued_at", "DESC"],
+        ],
+      }),
+      LibraryBook.findAll({
+        where: { is_active: true },
+        include: [{ model: Programme, as: "programme", attributes: ["id", "name"], required: false }],
+        order: [["title", "ASC"]],
+        limit: 200,
+      }),
+      LibraryElearning.findAll({
+        where: { is_active: true },
+        include: [{ model: Programme, as: "programme", attributes: ["id", "name"], required: false }],
+        order: [["title", "ASC"]],
+        limit: 200,
+      }),
+      LibraryRule.findAll({
+        where: { is_active: true },
+        order: [
+          ["article_no", "ASC"],
+          ["created_at", "ASC"],
+        ],
+      }),
+      LibraryService.findAll({
+        where: { is_active: true },
+        order: [
+          ["category", "ASC"],
+          ["name", "ASC"],
+        ],
+      }),
+    ]);
+
+    const bookIds = books.map((b) => b.id);
+    const loanCounts = bookIds.length
+      ? await LibraryLoan.findAll({
+          attributes: ["book_id", [fn("COUNT", col("id")), "on_loan"]],
+          where: {
+            book_id: { [Op.in]: bookIds },
+            returned_at: null,
+            status: { [Op.in]: ["active", "overdue"] },
+          },
+          group: ["book_id"],
+          raw: true,
+        })
+      : [];
+    const availableMap = new Map(loanCounts.map((r) => [r.book_id, Number(r.on_loan) || 0]));
+
+    const now = Date.now();
+    const loanData = loans.map((row) => {
+      const plain = serializeLoan(row);
+      const dueMs = plain.due_at ? new Date(plain.due_at).getTime() : null;
+      plain.book_author = plain.book?.author || null;
+      plain.ms_until_due = dueMs != null ? dueMs - now : null;
+      plain.is_overdue = plain.status === "overdue";
+      delete plain.book;
+      return plain;
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        loans: loanData,
+        books: books.map((row) => serializeBook(row, availableMap)),
+        elearning: elearning.map(serializeElearning),
+        summary: {
+          on_loan: loanData.filter((l) => l.status === "active").length,
+          overdue: loanData.filter((l) => l.status === "overdue").length,
+          total: loanData.length,
+          books: books.length,
+          elearning: elearning.length,
+        },
+        rules: rules.map(serializeRule),
+        services: services.map(serializeService),
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
 
 /** GET /api/library/stats */
 exports.getStats = async (req, res) => {
@@ -584,7 +717,6 @@ exports.createLoan = async (req, res) => {
     }
 
     const maxBooks = DEFAULT_MAX_BOOKS;
-    const loanDays = DEFAULT_LOAN_DAYS;
 
     const borrowerActive = await LibraryLoan.count({
       where: {
@@ -603,8 +735,7 @@ exports.createLoan = async (req, res) => {
 
     const issued_at = req.body.issued_at ? new Date(req.body.issued_at) : new Date();
     if (Number.isNaN(issued_at.getTime())) throw httpError(400, "issued_at is invalid.");
-    const due_at = req.body.due_at ? new Date(req.body.due_at) : addDays(issued_at, loanDays);
-    if (Number.isNaN(due_at.getTime())) throw httpError(400, "due_at is invalid.");
+    const due_at = resolveLoanDueAt(issued_at, req.body);
 
     const loan = await LibraryLoan.create(
       {

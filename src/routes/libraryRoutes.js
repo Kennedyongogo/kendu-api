@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getStats,
+  getMyLibrary,
   listBooks,
   createBook,
   updateBook,
@@ -26,11 +27,15 @@ const {
   authenticateUser,
   authorizeRoles,
   ADMIN_PORTAL_API_ROLES,
+  PUBLIC_PORTAL_ALLOWED_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
 const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
+
+router.get("/me", ...studentsOnly, getMyLibrary);
 
 router.get("/stats", ...adminOnly, getStats);
 router.get("/borrowers", ...adminOnly, searchBorrowers);
