@@ -1,6 +1,8 @@
+const http = require("http");
 const { app, appInitialized } = require("./app");
 const config = require("./config/config");
 const { testConnections } = require("./config/database");
+const { initStaffChatSocket } = require("./realtime/staffChatSocket");
 
 const PORT = process.env.PORT || 4000;
 
@@ -9,7 +11,10 @@ async function createServer() {
     await testConnections();
     await appInitialized;
 
-    const server = app.listen(PORT, () => {
+    const server = http.createServer(app);
+    initStaffChatSocket(server);
+
+    server.listen(PORT, () => {
       console.log(`🚀 Worker ${process.pid} listening on port ${PORT}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV}`);
       console.log(

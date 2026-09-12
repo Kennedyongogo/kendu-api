@@ -1,15 +1,15 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const StaffChannelMessage = sequelize.define(
-    "StaffChannelMessage",
+  const StaffChatMember = sequelize.define(
+    "StaffChatMember",
     {
       id: {
         type: DataTypes.UUID,
         primaryKey: true,
         defaultValue: DataTypes.UUIDV4,
       },
-      channel_id: {
+      chat_id: {
         type: DataTypes.UUID,
         allowNull: false,
       },
@@ -17,17 +17,21 @@ module.exports = (sequelize) => {
         type: DataTypes.UUID,
         allowNull: false,
       },
-      body: {
-        type: DataTypes.TEXT,
-        allowNull: false,
+      last_read_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
       },
     },
     {
-      tableName: "staff_channel_messages",
+      tableName: "staff_chat_members",
       timestamps: true,
       underscored: true,
+      indexes: [
+        { unique: true, fields: ["chat_id", "user_id"] },
+        { fields: ["user_id"] },
+      ],
     }
   );
 
-  return StaffChannelMessage;
+  return StaffChatMember;
 };

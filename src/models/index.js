@@ -25,11 +25,10 @@ const ExamSlot = require("./examSlot")(sequelize);
 const StudentAcademicHistory = require("./studentAcademicHistory")(sequelize);
 const StudentTranscript = require("./studentTranscript")(sequelize);
 const StudentTranscriptLine = require("./studentTranscriptLine")(sequelize);
-const StaffBriefing = require("./staffBriefing")(sequelize);
-const StaffBriefingAttachment = require("./staffBriefingAttachment")(sequelize);
-const StaffBriefingRead = require("./staffBriefingRead")(sequelize);
-const StaffChannel = require("./staffChannel")(sequelize);
-const StaffChannelMessage = require("./staffChannelMessage")(sequelize);
+const StaffChat = require("./staffChat")(sequelize);
+const StaffChatMember = require("./staffChatMember")(sequelize);
+const StaffChatMessage = require("./staffChatMessage")(sequelize);
+const StaffChatAttachment = require("./staffChatAttachment")(sequelize);
 const LibraryBook = require("./libraryBook")(sequelize);
 const LibraryRule = require("./libraryRule")(sequelize);
 const LibraryLoan = require("./libraryLoan")(sequelize);
@@ -61,11 +60,10 @@ const models = {
   StudentAcademicHistory,
   StudentTranscript,
   StudentTranscriptLine,
-  StaffBriefing,
-  StaffBriefingAttachment,
-  StaffBriefingRead,
-  StaffChannel,
-  StaffChannelMessage,
+  StaffChat,
+  StaffChatMember,
+  StaffChatMessage,
+  StaffChatAttachment,
   LibraryBook,
   LibraryRule,
   LibraryLoan,
@@ -125,11 +123,10 @@ const initializeModels = async () => {
     await StudentAcademicHistory.sync({ force: false, alter: true });
     await StudentTranscript.sync({ force: false, alter: true });
     await StudentTranscriptLine.sync({ force: false, alter: true });
-    await StaffBriefing.sync({ force: false, alter: true });
-    await StaffBriefingAttachment.sync({ force: false, alter: true });
-    await StaffBriefingRead.sync({ force: false, alter: true });
-    await StaffChannel.sync({ force: false, alter: true });
-    await StaffChannelMessage.sync({ force: false, alter: true });
+    await StaffChat.sync({ force: false, alter: true });
+    await StaffChatMember.sync({ force: false, alter: true });
+    await StaffChatMessage.sync({ force: false, alter: true });
+    await StaffChatAttachment.sync({ force: false, alter: true });
     await LibraryBook.sync({ force: false, alter: true });
     await LibraryRule.sync({ force: false, alter: true });
     await LibraryLoan.sync({ force: false, alter: true });
@@ -496,69 +493,52 @@ const setupAssociations = () => {
       as: "registration",
     });
 
-    models.StaffBriefing.belongsTo(models.User, {
+    models.StaffChat.belongsTo(models.User, {
       foreignKey: "created_by",
-      as: "author",
+      as: "creator",
     });
-    models.User.hasMany(models.StaffBriefing, {
-      foreignKey: "created_by",
-      as: "staff_briefings",
-    });
-    models.StaffBriefing.belongsTo(models.Department, {
-      foreignKey: "department_id",
-      as: "department",
-    });
-    models.Department.hasMany(models.StaffBriefing, {
-      foreignKey: "department_id",
-      as: "staff_briefings",
-    });
-    models.StaffBriefing.hasMany(models.StaffBriefingAttachment, {
-      foreignKey: "briefing_id",
-      as: "attachments",
+    models.StaffChat.hasMany(models.StaffChatMember, {
+      foreignKey: "chat_id",
+      as: "members",
       onDelete: "CASCADE",
     });
-    models.StaffBriefingAttachment.belongsTo(models.StaffBriefing, {
-      foreignKey: "briefing_id",
-      as: "briefing",
+    models.StaffChatMember.belongsTo(models.StaffChat, {
+      foreignKey: "chat_id",
+      as: "chat",
     });
-    models.StaffBriefing.hasMany(models.StaffBriefingRead, {
-      foreignKey: "briefing_id",
-      as: "reads",
-      onDelete: "CASCADE",
-    });
-    models.StaffBriefingRead.belongsTo(models.StaffBriefing, {
-      foreignKey: "briefing_id",
-      as: "briefing",
-    });
-    models.StaffBriefingRead.belongsTo(models.User, {
+    models.StaffChatMember.belongsTo(models.User, {
       foreignKey: "user_id",
       as: "user",
     });
-
-    models.StaffChannel.belongsTo(models.Department, {
-      foreignKey: "department_id",
-      as: "department",
+    models.User.hasMany(models.StaffChatMember, {
+      foreignKey: "user_id",
+      as: "staff_chat_memberships",
     });
-    models.Department.hasMany(models.StaffChannel, {
-      foreignKey: "department_id",
-      as: "staff_channels",
-    });
-    models.StaffChannel.hasMany(models.StaffChannelMessage, {
-      foreignKey: "channel_id",
+    models.StaffChat.hasMany(models.StaffChatMessage, {
+      foreignKey: "chat_id",
       as: "messages",
       onDelete: "CASCADE",
     });
-    models.StaffChannelMessage.belongsTo(models.StaffChannel, {
-      foreignKey: "channel_id",
-      as: "channel",
+    models.StaffChatMessage.belongsTo(models.StaffChat, {
+      foreignKey: "chat_id",
+      as: "chat",
     });
-    models.StaffChannelMessage.belongsTo(models.User, {
+    models.StaffChatMessage.belongsTo(models.User, {
       foreignKey: "user_id",
       as: "author",
     });
-    models.User.hasMany(models.StaffChannelMessage, {
+    models.User.hasMany(models.StaffChatMessage, {
       foreignKey: "user_id",
-      as: "staff_channel_messages",
+      as: "staff_chat_messages",
+    });
+    models.StaffChatMessage.hasMany(models.StaffChatAttachment, {
+      foreignKey: "message_id",
+      as: "attachments",
+      onDelete: "CASCADE",
+    });
+    models.StaffChatAttachment.belongsTo(models.StaffChatMessage, {
+      foreignKey: "message_id",
+      as: "message",
     });
 
     models.LibraryBook.belongsTo(models.Programme, {

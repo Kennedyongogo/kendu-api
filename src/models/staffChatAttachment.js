@@ -1,15 +1,15 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const StaffBriefingAttachment = sequelize.define(
-    "StaffBriefingAttachment",
+  const StaffChatAttachment = sequelize.define(
+    "StaffChatAttachment",
     {
       id: {
         type: DataTypes.UUID,
         primaryKey: true,
         defaultValue: DataTypes.UUIDV4,
       },
-      briefing_id: {
+      message_id: {
         type: DataTypes.UUID,
         allowNull: false,
       },
@@ -19,7 +19,7 @@ module.exports = (sequelize) => {
       },
       original_name: {
         type: DataTypes.STRING(255),
-        allowNull: true,
+        allowNull: false,
       },
       mime_type: {
         type: DataTypes.STRING(120),
@@ -31,11 +31,11 @@ module.exports = (sequelize) => {
       },
     },
     {
-      tableName: "staff_briefing_attachments",
+      tableName: "staff_chat_attachments",
       timestamps: true,
       underscored: true,
     }
   );
 
-  return StaffBriefingAttachment;
+  return StaffChatAttachment;
 };
