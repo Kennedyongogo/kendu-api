@@ -91,6 +91,98 @@ async function coverPhotoBuffer(profilePath, widthPt, heightPt) {
     .toBuffer();
 }
 
+function buildMonthDayColumns(date = new Date()) {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const chunk = Math.ceil(daysInMonth / 3) || 10;
+  const columns = [];
+  for (let i = 0; i < days.length; i += chunk) {
+    columns.push(days.slice(i, i + chunk));
+  }
+  while (columns.length < 3) columns.push([]);
+  const monthLabel = date.toLocaleDateString("en-KE", { month: "long", year: "numeric" });
+  return { monthLabel, columns: columns.slice(0, 3) };
+}
+
+function drawMealLogBack(doc) {
+  const W = CR80.width;
+  const H = CR80.height;
+  const { monthLabel, columns } = buildMonthDayColumns(new Date());
+
+  doc.addPage({ size: [W, H], margin: 0 });
+  doc.rect(0, 0, W, H).fill(BRAND.cream);
+  doc.rect(0, 0, W, 18).fill(BRAND.green);
+  doc.rect(0, H - 14, W, 14).fill(BRAND.greenDark);
+
+  write(doc, "MEAL LOG", 8, 5.5, { size: 7, bold: true, color: BRAND.white, width: 80 });
+  write(doc, safeText(monthLabel.toUpperCase(), 22), W - 110, 5.5, {
+    size: 7,
+    bold: true,
+    color: BRAND.white,
+    width: 102,
+    align: "right",
+  });
+
+  write(doc, "B breakfast  |  L lunch  |  S supper", 8, H - 10, {
+    size: 5,
+    color: BRAND.white,
+    width: 150,
+  });
+  write(doc, "Mark when served", W - 78, H - 10, {
+    size: 5,
+    bold: true,
+    color: BRAND.gold,
+    width: 70,
+    align: "right",
+  });
+
+  const gridTop = 22;
+  const gridBottom = H - 16;
+  const gridH = gridBottom - gridTop;
+  const gap = 3;
+  const colW = (W - 16 - gap * 2) / 3;
+  const startX = 8;
+
+  columns.forEach((days, colIdx) => {
+    const x = startX + colIdx * (colW + gap);
+    const headerH = 10;
+    const rowH = Math.min(10, (gridH - headerH - 2) / Math.max(days.length, 1));
+
+    doc.roundedRect(x, gridTop, colW, gridH, 2).fillAndStroke(BRAND.white, "#c5d4e8");
+    doc.rect(x, gridTop, colW, headerH).fill(BRAND.greenDark);
+
+    const headers = ["#", "B", "L", "S"];
+    const cellW = colW / 4;
+    headers.forEach((h, i) => {
+      write(doc, h, x + i * cellW, gridTop + 2.5, {
+        size: 5,
+        bold: true,
+        color: BRAND.white,
+        width: cellW,
+        align: "center",
+      });
+    });
+
+    days.forEach((day, rowIdx) => {
+      const y = gridTop + headerH + 1 + rowIdx * rowH;
+      write(doc, String(day), x, y + Math.max(0, (rowH - 6) / 2), {
+        size: 5.5,
+        bold: true,
+        color: BRAND.navy,
+        width: cellW,
+        align: "center",
+      });
+      for (let m = 1; m <= 3; m += 1) {
+        const bx = x + m * cellW + cellW / 2 - 3;
+        const by = y + Math.max(0, (rowH - 6) / 2);
+        doc.lineWidth(0.6).rect(bx, by, 6, 6).stroke(BRAND.green);
+      }
+    });
+  });
+}
+
 /**
  * @param {object} card — meal card payload from mealController
  * @returns {Promise<Buffer>}
@@ -224,6 +316,7 @@ async function buildMealCardPdf(card) {
       align: "right",
     });
 
+    drawMealLogBack(doc);
     doc.end();
   });
 }

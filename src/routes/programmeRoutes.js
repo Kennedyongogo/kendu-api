@@ -5,6 +5,7 @@ const multer = require("multer");
 const {
   listProgrammes,
   getProgrammeById,
+  getMyProgramme,
   createProgramme,
   updateProgramme,
   deleteProgramme,
@@ -26,7 +27,13 @@ const {
   deleteSubjectRequirement,
   getProgrammeEnrolmentOptions,
 } = require("../controllers/programmeController");
-const { authenticateUser, authorizeRoles, ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
+const {
+  authenticateUser,
+  authorizeRoles,
+  optionalAuth,
+  ADMIN_PORTAL_API_ROLES,
+  PUBLIC_PORTAL_ALLOWED_ROLES,
+} = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
@@ -55,10 +62,16 @@ const upload = multer({
 });
 
 const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
+const portalOrStudent = [
+  authenticateUser,
+  authorizeRoles([...ADMIN_PORTAL_API_ROLES, ...PUBLIC_PORTAL_ALLOWED_ROLES]),
+];
 
 // Programmes
-router.get("/", listProgrammes);
+router.get("/", optionalAuth, listProgrammes);
 router.post("/", ...adminOnly, upload.single("image"), createProgramme);
+router.get("/me", ...studentsOnly, getMyProgramme);
 
 // Hour distributions (nested — before /:id)
 router.get("/:id/hour-distributions", listHourDistributions);
@@ -66,8 +79,8 @@ router.post("/:id/hour-distributions", ...adminOnly, createHourDistribution);
 router.put("/:id/hour-distributions/:hourId", ...adminOnly, updateHourDistribution);
 router.delete("/:id/hour-distributions/:hourId", ...adminOnly, deleteHourDistribution);
 
-// Modules (nested — before /:id)
-router.get("/:id/modules", listModules);
+// Modules — staff/admin or students only (not public)
+router.get("/:id/modules", ...portalOrStudent, listModules);
 router.post("/:id/modules", ...adminOnly, createModule);
 router.put("/:id/modules/:moduleId", ...adminOnly, updateModule);
 router.delete("/:id/modules/:moduleId", ...adminOnly, deleteModule);
@@ -86,7 +99,7 @@ router.delete("/:id/subject-requirements/:requirementId", ...adminOnly, deleteSu
 
 router.get("/:id/enrolment-options", getProgrammeEnrolmentOptions);
 
-router.get("/:id", getProgrammeById);
+router.get("/:id", optionalAuth, getProgrammeById);
 router.put("/:id", ...adminOnly, upload.single("image"), updateProgramme);
 router.delete("/:id", ...adminOnly, deleteProgramme);
 

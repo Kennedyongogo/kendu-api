@@ -180,12 +180,16 @@ function drawSummaryStrip(doc, y, summary) {
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const width = right - left;
-  const colWidth = width / 3;
+  const hasCredit = Number(summary.credit) > 0;
   const items = [
     ["Total billed", money(summary.total_charged, summary.currency)],
     ["Total paid", money(summary.total_paid, summary.currency)],
     ["Balance", money(summary.balance, summary.currency)],
   ];
+  if (hasCredit) {
+    items.push(["Excess credit", money(summary.credit, summary.currency)]);
+  }
+  const colWidth = width / items.length;
 
   doc.roundedRect(left, y, width, 42, 8).fill("#f4faf8");
   items.forEach(([label, value], index) => {
@@ -201,6 +205,7 @@ function drawSummaryStrip(doc, y, summary) {
       size: 10,
       bold: true,
       align: "center",
+      color: label === "Excess credit" ? BRAND.gold : BRAND.navy,
     });
   });
 

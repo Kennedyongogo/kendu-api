@@ -10,6 +10,8 @@ const RESOURCE_BY_PREFIX = {
   "programme-resources": "programme",
   admissions: "admission_application",
   music: "music",
+  brochures: "brochure",
+  "upcoming-activities": "upcoming_activity",
   "audit-trail": "audit_trail",
 };
 
@@ -65,6 +67,10 @@ function shouldAudit(req) {
   if (path.startsWith("/api/programmes") && req.method === "GET" && !req.user) return false;
   // Public music playlist for home background audio
   if (path.startsWith("/api/music/public") && req.method === "GET") return false;
+  // Public school brochures
+  if (path.startsWith("/api/brochures/public") && req.method === "GET") return false;
+  if (/^\/api\/brochures\/[^/]+\/file$/i.test(path) && req.method === "GET") return false;
+  if (path.startsWith("/api/upcoming-activities/public") && req.method === "GET") return false;
   const method = String(req.method || "").toUpperCase();
   // Track all mutating CRUD; optional reads when user is logged in
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) return true;

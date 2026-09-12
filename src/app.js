@@ -15,6 +15,8 @@ const programmeRoutes = require("./routes/programmeRoutes");
 const programmeResourceRoutes = require("./routes/programmeResourceRoutes");
 const admissionRoutes = require("./routes/admissionRoutes");
 const musicRoutes = require("./routes/musicRoutes");
+const brochureRoutes = require("./routes/brochureRoutes");
+const upcomingActivityRoutes = require("./routes/upcomingActivityRoutes");
 const auditTrailRoutes = require("./routes/auditTrailRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const accountingRoutes = require("./routes/accountingRoutes");
@@ -57,6 +59,12 @@ if (!fs.existsSync(musicUploadPath)) {
   fs.mkdirSync(musicUploadPath, { recursive: true });
 }
 app.use("/uploads/music", express.static(musicUploadPath));
+
+const brochuresUploadPath = path.join(__dirname, "..", "uploads", "brochures");
+if (!fs.existsSync(brochuresUploadPath)) {
+  fs.mkdirSync(brochuresUploadPath, { recursive: true });
+}
+app.use("/uploads/brochures", express.static(brochuresUploadPath));
 
 const announcementsUploadPath = path.join(__dirname, "..", "uploads", "announcements");
 if (!fs.existsSync(announcementsUploadPath)) {
@@ -103,6 +111,12 @@ app.use("/api/admissions", admissionRoutes);
 // GET/POST       /api/music          (admin)
 // GET/PUT/DELETE /api/music/:id      (admin)
 app.use("/api/music", musicRoutes);
+// Brochures (public school prospectus / downloads)
+// GET            /api/brochures/public
+// GET            /api/brochures/:id/file
+// GET/POST/PUT/DELETE /api/brochures  (admin)
+app.use("/api/brochures", brochureRoutes);
+app.use("/api/upcoming-activities", upcomingActivityRoutes);
 app.use("/api/audit-trail", auditTrailRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/accounting", accountingRoutes);

@@ -67,11 +67,14 @@ async function ensureStudentCharges(student, transaction) {
 }
 
 async function allocateConfirmedPayment(payment, transaction) {
-  const existing = await FeePaymentAllocation.count({
-    where: { payment_id: payment.id },
-    transaction,
-  });
-  if (existing) return;
+  const allocatedSoFar = money(
+    (await FeePaymentAllocation.sum("amount", {
+      where: { payment_id: payment.id },
+      transaction,
+    })) || 0
+  );
+  let remaining = money(payment.amount - allocatedSoFar);
+  if (remaining <= 0) return;
 
   // Lock the charges without a join: Postgres cannot apply FOR UPDATE to the
   // nullable side of an outer join, so allocations are summed in a second query.
@@ -100,7 +103,6 @@ async function allocateConfirmedPayment(payment, transaction) {
     );
   }
 
-  let remaining = money(payment.amount);
   for (const charge of charges) {
     if (remaining <= 0) break;
     const allocated = allocatedByCharge.get(charge.id) || 0;
@@ -112,6 +114,21 @@ async function allocateConfirmedPayment(payment, transaction) {
       { transaction }
     );
     remaining = money(remaining - amount);
+  }
+}
+
+/** Apply any leftover payment credit to newer unpaid charges. */
+async function applyStudentFeeCredits(studentId, transaction) {
+  const payments = await FeePayment.findAll({
+    where: { student_id: studentId, status: "confirmed" },
+    order: [
+      ["paid_at", "ASC"],
+      ["createdAt", "ASC"],
+    ],
+    transaction,
+  });
+  for (const payment of payments) {
+    await allocateConfirmedPayment(payment, transaction);
   }
 }
 
@@ -137,6 +154,9 @@ async function buildLedger(studentId) {
   }
 
   await ensureStudentCharges(student);
+  await sequelize.transaction(async (transaction) => {
+    await applyStudentFeeCredits(studentId, transaction);
+  });
 
   const [charges, payments] = await Promise.all([
     StudentFeeCharge.findAll({
@@ -202,7 +222,7 @@ async function buildLedger(studentId) {
       .filter((payment) => payment.status === "confirmed")
       .reduce((sum, payment) => sum + money(payment.amount), 0)
   );
-  const totalPaid = Math.min(totalCharged, confirmedPaid);
+  const totalPaid = confirmedPaid;
   const balance = Math.max(0, money(totalCharged - confirmedPaid));
   const credit = Math.max(0, money(confirmedPaid - totalCharged));
   const arrears = money(
@@ -221,6 +241,7 @@ async function buildLedger(studentId) {
       balance,
       arrears,
       credit,
+      has_credit: credit > 0,
       current_semester_fee: currentCharge?.amount || 0,
       current_semester_paid: currentCharge?.paid || 0,
       current_semester_balance: currentCharge?.balance || 0,
@@ -487,10 +508,20 @@ exports.recordPayment = async (req, res) => {
       return created;
     });
 
+    const ledger = await buildLedger(student.id);
+    const credit = ledger.summary.credit || 0;
+    const message =
+      credit > 0
+        ? `Payment recorded. ${ledger.summary.currency} ${credit.toLocaleString()} excess fee credit is now on this student's account.`
+        : "Payment recorded and allocated to the oldest balance";
+
     return res.status(201).json({
       success: true,
-      message: "Payment recorded and allocated to the oldest balance",
-      data: payment,
+      message,
+      data: {
+        payment,
+        summary: ledger.summary,
+      },
     });
   } catch (error) {
     const duplicate = error.name === "SequelizeUniqueConstraintError";
@@ -726,6 +757,7 @@ exports.getAccountingDashboard = async (req, res) => {
     const receipts = money(receiptsRaw);
     const collected = money(collectedRaw);
     const outstanding = Math.max(0, money(billed - collected));
+    const credit = Math.max(0, money(receipts - collected));
     const collectionRate = billed > 0 ? money((collected / billed) * 100) : 0;
 
     return res.json({
@@ -735,7 +767,8 @@ exports.getAccountingDashboard = async (req, res) => {
           billed,
           collected,
           outstanding,
-          credit: Math.max(0, money(receipts - collected)),
+          credit,
+          has_credit: credit > 0,
           collection_rate: collectionRate,
           students: studentCount,
         },

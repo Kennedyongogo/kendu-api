@@ -12,6 +12,7 @@ const {
   sequelize,
 } = require("../models");
 const { logFromRequest } = require("../middleware/auditLogger");
+const { ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
 
 const CATEGORIES = ["certificate", "diploma", "higher_diploma"];
 const MODES = ["full_time", "part_time"];
@@ -501,7 +502,13 @@ exports.listProgrammes = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows.map(serializeProgramme),
+      data: rows.map((row) => {
+        const data = serializeProgramme(row);
+        if (!req.user || !ADMIN_PORTAL_API_ROLES.includes(req.user.role)) {
+          delete data.modules;
+        }
+        return data;
+      }),
       pagination: {
         total: count,
         page,
@@ -520,7 +527,46 @@ exports.getProgrammeById = async (req, res) => {
     if (!programme) {
       return res.status(404).json({ success: false, message: "Programme not found" });
     }
-    return res.json({ success: true, data: serializeProgramme(programme) });
+    const data = serializeProgramme(programme);
+    // Modules are for enrolled students / staff only — hide from public
+    const role = req.user?.role;
+    const canSeeModules =
+      role === "admin" ||
+      role === "staff" ||
+      (role === "student" && req.user?.programme_id === programme.id);
+    if (!canSeeModules) {
+      delete data.modules;
+    }
+    return res.json({ success: true, data });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** Student portal: own programme with modules */
+exports.getMyProgramme = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ success: false, message: "Students only" });
+    }
+    if (!req.user.programme_id) {
+      return res.status(404).json({
+        success: false,
+        message: "No programme is assigned to your account",
+      });
+    }
+    const programme = await loadProgrammeWithChildren(req.user.programme_id);
+    if (!programme || programme.is_active === false) {
+      return res.status(404).json({ success: false, message: "Programme not found" });
+    }
+    return res.json({
+      success: true,
+      data: {
+        ...serializeProgramme(programme),
+        student_year: req.user.year_of_study ?? null,
+        student_semester: req.user.semester ?? null,
+      },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -1116,6 +1162,14 @@ exports.listModules = async (req, res) => {
     const programme = await Programme.findByPk(req.params.id);
     if (!programme) {
       return res.status(404).json({ success: false, message: "Programme not found" });
+    }
+
+    // Students may only list modules for their own programme
+    if (
+      req.user?.role === "student" &&
+      req.user.programme_id !== programme.id
+    ) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     const { page, limit, offset } = parsePagination(req.query);

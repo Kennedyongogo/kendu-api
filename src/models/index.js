@@ -12,6 +12,7 @@ const ProgrammeFee = require("./programmeFee")(sequelize);
 const ProgrammeSubjectRequirement = require("./programmeSubjectRequirement")(sequelize);
 const AdmissionApplication = require("./admissionApplication")(sequelize);
 const Music = require("./music")(sequelize);
+const Brochure = require("./brochure")(sequelize);
 const StudentFeeCharge = require("./studentFeeCharge")(sequelize);
 const FeePayment = require("./feePayment")(sequelize);
 const FeePaymentAllocation = require("./feePaymentAllocation")(sequelize);
@@ -34,6 +35,7 @@ const LibraryRule = require("./libraryRule")(sequelize);
 const LibraryLoan = require("./libraryLoan")(sequelize);
 const LibraryElearning = require("./libraryElearning")(sequelize);
 const LibraryService = require("./libraryService")(sequelize);
+const UpcomingActivity = require("./upcomingActivity")(sequelize);
 
 const models = {
   User,
@@ -47,6 +49,7 @@ const models = {
   ProgrammeSubjectRequirement,
   AdmissionApplication,
   Music,
+  Brochure,
   StudentFeeCharge,
   FeePayment,
   FeePaymentAllocation,
@@ -69,6 +72,31 @@ const models = {
   LibraryLoan,
   LibraryElearning,
   LibraryService,
+  UpcomingActivity,
+};
+
+const isConnectionReset = (error) => {
+  const msg = `${error?.message || ""} ${error?.parent?.message || ""} ${error?.original?.message || ""}`;
+  return /ECONNRESET|Connection terminated|Connection refused|severed|timeout/i.test(msg);
+};
+
+/** Sync one model; on dropped DB connections, reconnect and retry without alter. */
+const safeSync = async (model, { alter = true } = {}) => {
+  try {
+    await model.sync({ force: false, alter });
+  } catch (error) {
+    if (!isConnectionReset(error)) throw error;
+    console.warn(
+      `⚠️ Sync connection reset for ${model.name}; reconnecting and retrying without alter...`
+    );
+    try {
+      await sequelize.connectionManager.close();
+    } catch (_) {
+      /* ignore */
+    }
+    await sequelize.authenticate();
+    await model.sync({ force: false, alter: false });
+  }
 };
 
 // Initialize models in correct order (parent tables first)
@@ -77,11 +105,11 @@ const initializeModels = async () => {
     console.log("🔄 Creating/updating tables...");
 
     console.log("📋 Syncing parent tables...");
-    await Department.sync({ force: false, alter: true });
-    await User.sync({ force: false, alter: true });
+    await safeSync(Department);
+    await safeSync(User);
     // alter: true so new programme columns are applied to existing tables
-    await Programme.sync({ force: false, alter: true });
-    await ProgrammeDepartment.sync({ force: false, alter: true });
+    await safeSync(Programme);
+    await safeSync(ProgrammeDepartment);
 
     // Migrate legacy programmes.department_id → programme_departments (if column still exists)
     try {
@@ -103,35 +131,39 @@ const initializeModels = async () => {
     }
 
     console.log("📋 Syncing child tables...");
-    await AuditTrail.sync({ force: false, alter: false });
-    await ProgrammeHourDistribution.sync({ force: false, alter: true });
-    await ProgrammeModule.sync({ force: false, alter: true });
-    await ProgrammeFee.sync({ force: false, alter: true });
-    await ProgrammeSubjectRequirement.sync({ force: false, alter: true });
-    await AdmissionApplication.sync({ force: false, alter: true });
-    await Music.sync({ force: false, alter: true });
-    await StudentFeeCharge.sync({ force: false, alter: true });
-    await FeePayment.sync({ force: false, alter: true });
-    await FeePaymentAllocation.sync({ force: false, alter: true });
-    await TimetableEntry.sync({ force: false, alter: true });
-    await Unit.sync({ force: false, alter: true });
-    await StudentUnitRegistration.sync({ force: false, alter: true });
-    await AccessPolicy.sync({ force: false, alter: true });
-    await Announcement.sync({ force: false, alter: true });
-    await ExamPeriod.sync({ force: false, alter: true });
-    await ExamSlot.sync({ force: false, alter: true });
-    await StudentAcademicHistory.sync({ force: false, alter: true });
-    await StudentTranscript.sync({ force: false, alter: true });
-    await StudentTranscriptLine.sync({ force: false, alter: true });
-    await StaffChat.sync({ force: false, alter: true });
-    await StaffChatMember.sync({ force: false, alter: true });
-    await StaffChatMessage.sync({ force: false, alter: true });
-    await StaffChatAttachment.sync({ force: false, alter: true });
-    await LibraryBook.sync({ force: false, alter: true });
-    await LibraryRule.sync({ force: false, alter: true });
-    await LibraryLoan.sync({ force: false, alter: true });
-    await LibraryElearning.sync({ force: false, alter: true });
-    await LibraryService.sync({ force: false, alter: true });
+    await safeSync(AuditTrail, { alter: false });
+    await safeSync(ProgrammeHourDistribution);
+    await safeSync(ProgrammeModule);
+    await safeSync(ProgrammeFee);
+    await safeSync(ProgrammeSubjectRequirement);
+    await safeSync(AdmissionApplication);
+    await safeSync(Music);
+    await safeSync(Brochure);
+    await safeSync(StudentFeeCharge);
+    await safeSync(FeePayment);
+    await safeSync(FeePaymentAllocation);
+    await safeSync(TimetableEntry);
+    await safeSync(Unit);
+    await safeSync(StudentUnitRegistration);
+    await safeSync(AccessPolicy);
+    await safeSync(Announcement);
+    await safeSync(ExamPeriod);
+    await safeSync(ExamSlot);
+    await safeSync(StudentAcademicHistory);
+    // alter:false — Sequelize repeatedly rewrites VARCHAR unit_code on Postgres and
+    // that ALTER can drop remote connections (ECONNRESET). Schema is already stable.
+    await safeSync(StudentTranscript, { alter: false });
+    await safeSync(StudentTranscriptLine, { alter: false });
+    await safeSync(StaffChat);
+    await safeSync(StaffChatMember);
+    await safeSync(StaffChatMessage);
+    await safeSync(StaffChatAttachment);
+    await safeSync(LibraryBook);
+    await safeSync(LibraryRule);
+    await safeSync(LibraryLoan);
+    await safeSync(LibraryElearning);
+    await safeSync(LibraryService);
+    await safeSync(UpcomingActivity);
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -579,6 +611,15 @@ const setupAssociations = () => {
       foreignKey: "programme_id",
       as: "library_elearning",
       onDelete: "SET NULL",
+    });
+
+    models.UpcomingActivity.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.UpcomingActivity.belongsTo(models.User, {
+      foreignKey: "approved_by",
+      as: "approver",
     });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
