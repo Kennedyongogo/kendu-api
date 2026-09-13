@@ -60,6 +60,20 @@ module.exports = (sequelize) => {
         allowNull: true,
         comment: "Current semester (1 or 2)",
       },
+      gender: {
+        type: DataTypes.STRING(20),
+        allowNull: true,
+        validate: {
+          isIn: [["male", "female"]],
+        },
+      },
+      boarding_status: {
+        type: DataTypes.STRING(20),
+        allowNull: true,
+        validate: {
+          isIn: [["boarder", "non_boarder"]],
+        },
+      },
       profile_image: {
         type: DataTypes.STRING(255),
         allowNull: true,

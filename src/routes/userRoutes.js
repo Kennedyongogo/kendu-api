@@ -18,6 +18,7 @@ const {
   importUsersExcel,
   previewImportExcel,
   importUsersMapped,
+  studentDashboardStats,
 } = require("../controllers/userController");
 const { authenticateUser, authorizeRoles } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
@@ -73,6 +74,12 @@ router.post(
   createUser
 );
 router.get("/", authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES), listUsers);
+router.get(
+  "/students/dashboard",
+  authenticateUser,
+  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  studentDashboardStats
+);
 
 router.get(
   "/import-template",

@@ -99,6 +99,70 @@ const safeSync = async (model, { alter = true } = {}) => {
   }
 };
 
+/**
+ * Sequelize's Postgres ENUM + alter + comment generates invalid SQL
+ * (`COMMENT ... USING ...`). Keep demographics as VARCHAR and repair any
+ * half-applied enum columns from a failed sync.
+ */
+const repairUsersDemographicColumns = async () => {
+  try {
+    await sequelize.query(`
+      DO $fix$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'gender'
+            AND udt_name = 'enum_users_gender'
+        ) THEN
+          ALTER TABLE users
+            ALTER COLUMN gender TYPE VARCHAR(20)
+            USING (gender::text);
+        ELSIF NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'gender'
+        ) THEN
+          ALTER TABLE users ADD COLUMN gender VARCHAR(20) NULL;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'boarding_status'
+            AND udt_name = 'enum_users_boarding_status'
+        ) THEN
+          ALTER TABLE users
+            ALTER COLUMN boarding_status TYPE VARCHAR(20)
+            USING (boarding_status::text);
+        ELSIF NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'boarding_status'
+        ) THEN
+          ALTER TABLE users ADD COLUMN boarding_status VARCHAR(20) NULL;
+        END IF;
+      END
+      $fix$;
+    `);
+
+    await sequelize.query(`DROP TYPE IF EXISTS "public"."enum_users_gender";`).catch(() => {});
+    await sequelize
+      .query(`DROP TYPE IF EXISTS "public"."enum_users_boarding_status";`)
+      .catch(() => {});
+  } catch (error) {
+    console.warn("⚠️ Could not repair users demographic columns:", error.message);
+  }
+};
+
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
@@ -106,6 +170,7 @@ const initializeModels = async () => {
 
     console.log("📋 Syncing parent tables...");
     await safeSync(Department);
+    await repairUsersDemographicColumns();
     await safeSync(User);
     // alter: true so new programme columns are applied to existing tables
     await safeSync(Programme);

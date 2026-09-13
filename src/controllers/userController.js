@@ -88,6 +88,8 @@ const STUDENT_IMPORT_FIELDS = [
   { key: "programme", label: "Programme", required: false },
   { key: "year_of_study", label: "Year of study", required: false },
   { key: "semester", label: "Semester", required: false },
+  { key: "gender", label: "Gender", required: false },
+  { key: "boarding_status", label: "Boarding status", required: false },
 ];
 
 const programmeInclude = {
@@ -118,6 +120,26 @@ function parseSemester(value) {
   if (["2", "sem 2", "semester 2", "sem2", "s2"].includes(s)) return 2;
   const n = parseInt(s.replace(/[^0-9]/g, ""), 10);
   if (n === 1 || n === 2) return n;
+  return null;
+}
+
+function parseGender(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const s = String(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["male", "m", "boy", "man"].includes(s)) return "male";
+  if (["female", "f", "girl", "woman"].includes(s)) return "female";
+  return null;
+}
+
+function parseBoardingStatus(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const s = String(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["boarder", "boarding", "resident", "yes", "true", "1"].includes(s)) return "boarder";
+  if (
+    ["non_boarder", "nonboarder", "day_scholar", "dayscholar", "day", "no", "false", "0"].includes(s)
+  ) {
+    return "non_boarder";
+  }
   return null;
 }
 
@@ -152,6 +174,15 @@ function studentEnrolmentError(role, { programme_id, year_of_study, semester }) 
   if (!programme_id) return "programme is required for student users";
   if (year_of_study == null) return "year of study is required for student users";
   if (semester == null) return "semester is required for student users (1 or 2)";
+  return null;
+}
+
+function studentDemographicsError(role, { gender, boarding_status }) {
+  if (role !== "student") return null;
+  if (!gender) return "gender is required for student users (male or female)";
+  if (!boarding_status) {
+    return "boarding status is required for student users (boarder or non_boarder)";
+  }
   return null;
 }
 
@@ -199,6 +230,12 @@ function expandAliases() {
     study_year: "year_of_study",
     sem: "semester",
     semester: "semester",
+    sex: "gender",
+    gender: "gender",
+    boarding: "boarding_status",
+    boarding_status: "boarding_status",
+    boarder: "boarding_status",
+    residence: "boarding_status",
   };
 }
 
@@ -241,10 +278,206 @@ function trimCell(v) {
 
 exports.downloadImportTemplate = async (req, res) => {
   try {
+    const forStudents = String(req.query.for || "").toLowerCase() === "student";
     const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet("Users", {
+    const ws = workbook.addWorksheet(forStudents ? "Students" : "Users", {
       views: [{ state: "frozen", ySplit: 1 }],
     });
+
+    if (forStudents) {
+      const programmes = await Programme.findAll({
+        where: { is_active: true },
+        attributes: [
+          "id",
+          "name",
+          "duration_years",
+          "semester_1_weeks",
+          "semester_1_period",
+          "semester_2_weeks",
+          "semester_2_period",
+        ],
+        order: [["name", "ASC"]],
+      });
+
+      const programmeNames = programmes
+        .map((p) => String(p.name || "").trim())
+        .filter(Boolean);
+
+      const yearSet = new Set();
+      const semSet = new Set();
+      for (const p of programmes) {
+        const duration = Number(p.duration_years);
+        if (Number.isFinite(duration) && duration >= 1) {
+          for (let y = 1; y <= Math.min(Math.floor(duration), 10); y += 1) {
+            yearSet.add(y);
+          }
+        }
+        if (
+          p.semester_1_weeks != null ||
+          (p.semester_1_period && String(p.semester_1_period).trim())
+        ) {
+          semSet.add(1);
+        }
+        if (
+          p.semester_2_weeks != null ||
+          (p.semester_2_period && String(p.semester_2_period).trim())
+        ) {
+          semSet.add(2);
+        }
+      }
+      if (yearSet.size === 0) {
+        [1, 2, 3].forEach((y) => yearSet.add(y));
+      }
+      if (semSet.size === 0) {
+        semSet.add(1);
+        semSet.add(2);
+      }
+      const years = [...yearSet].sort((a, b) => a - b);
+      const semesters = [...semSet].sort((a, b) => a - b);
+
+      const lists = workbook.addWorksheet("Lists");
+      lists.state = "hidden";
+      lists.getCell("A1").value = "programme";
+      lists.getCell("B1").value = "year_of_study";
+      lists.getCell("C1").value = "semester";
+      lists.getCell("D1").value = "gender";
+      lists.getCell("E1").value = "boarding_status";
+      lists.getRow(1).font = { bold: true };
+
+      programmeNames.forEach((name, i) => {
+        lists.getCell(`A${i + 2}`).value = name;
+      });
+      years.forEach((y, i) => {
+        lists.getCell(`B${i + 2}`).value = y;
+      });
+      semesters.forEach((s, i) => {
+        lists.getCell(`C${i + 2}`).value = s;
+      });
+      ["male", "female"].forEach((v, i) => {
+        lists.getCell(`D${i + 2}`).value = v;
+      });
+      ["boarder", "non_boarder"].forEach((v, i) => {
+        lists.getCell(`E${i + 2}`).value = v;
+      });
+
+      const guide = workbook.addWorksheet("Instructions");
+      guide.addRow(["Student import template"]);
+      guide.addRow([]);
+      guide.addRow(["1. Fill rows on the Students sheet."]);
+      guide.addRow(["2. Use the dropdowns for programme, year_of_study, semester, gender, and boarding_status."]);
+      guide.addRow(["3. Programme names come from active programmes in the system."]);
+      guide.addRow(["4. Year options are based on programme duration in the database."]);
+      guide.addRow(["5. Semester options are based on configured semester periods (usually 1 and 2)."]);
+      guide.addRow(["6. Password is optional; blank rows default to 123456 on import."]);
+      guide.getRow(1).font = { bold: true };
+
+      ws.addRow([
+        "email",
+        "full_name",
+        "admission_number",
+        "phone",
+        "password",
+        "programme",
+        "year_of_study",
+        "semester",
+        "gender",
+        "boarding_status",
+      ]);
+      ws.addRow([
+        "jane.doe@school.edu",
+        "Jane Doe",
+        "ADM-2026-001",
+        "+254712345678",
+        "123456",
+        programmeNames[0] || "",
+        years[0] != null ? years[0] : 1,
+        semesters[0] != null ? semesters[0] : 1,
+        "female",
+        "boarder",
+      ]);
+      ws.getRow(1).font = { bold: true };
+
+      const lastDataRow = MAX_IMPORT_ROWS + 1;
+      const programmeEnd = Math.max(2, programmeNames.length + 1);
+      const yearEnd = Math.max(2, years.length + 1);
+      const semEnd = Math.max(2, semesters.length + 1);
+
+      if (programmeNames.length) {
+        ws.dataValidations.add(`F2:F${lastDataRow}`, {
+          type: "list",
+          allowBlank: true,
+          formulae: [`Lists!$A$2:$A$${programmeEnd}`],
+          showErrorMessage: true,
+          errorTitle: "Invalid programme",
+          error: "Pick a programme from the list (active programmes in the system).",
+          promptTitle: "Programme",
+          prompt: "Select an active programme from the database.",
+          showInputMessage: true,
+        });
+      }
+
+      ws.dataValidations.add(`G2:G${lastDataRow}`, {
+        type: "list",
+        allowBlank: true,
+        formulae: [`Lists!$B$2:$B$${yearEnd}`],
+        showErrorMessage: true,
+        errorTitle: "Invalid year",
+        error: "Pick a year of study from the list.",
+        promptTitle: "Year of study",
+        prompt: "Years available from programme durations in the database.",
+        showInputMessage: true,
+      });
+
+      ws.dataValidations.add(`H2:H${lastDataRow}`, {
+        type: "list",
+        allowBlank: true,
+        formulae: [`Lists!$C$2:$C$${semEnd}`],
+        showErrorMessage: true,
+        errorTitle: "Invalid semester",
+        error: "Pick a semester from the list.",
+        promptTitle: "Semester",
+        prompt: "Semesters configured on programmes in the database.",
+        showInputMessage: true,
+      });
+
+      ws.dataValidations.add(`I2:I${lastDataRow}`, {
+        type: "list",
+        allowBlank: true,
+        formulae: ["Lists!$D$2:$D$3"],
+        showErrorMessage: true,
+        errorTitle: "Invalid gender",
+        error: "Must be male or female.",
+        promptTitle: "Gender",
+        prompt: "male or female",
+        showInputMessage: true,
+      });
+
+      ws.dataValidations.add(`J2:J${lastDataRow}`, {
+        type: "list",
+        allowBlank: true,
+        formulae: ["Lists!$E$2:$E$3"],
+        showErrorMessage: true,
+        errorTitle: "Invalid boarding status",
+        error: "Must be boarder or non_boarder.",
+        promptTitle: "Boarding status",
+        prompt: "boarder or non_boarder",
+        showInputMessage: true,
+      });
+
+      // Keep Students first for users opening the file
+      workbook.views = [{ activeTab: 0 }];
+
+      const buf = await workbook.xlsx.writeBuffer();
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="students-import-template.xlsx"'
+      );
+      return res.send(Buffer.from(buf));
+    }
 
     ws.addRow(["email", "password", "full_name", "phone", "admission_number", "role"]);
     ws.addRow([
@@ -523,7 +756,7 @@ exports.previewImportExcel = async (req, res) => {
 /**
  * Import students with explicit column mapping.
  * mapping: { email: "Email", full_name: "Name", ... } (system field -> Excel header)
- * defaults: { programme_id, year_of_study, semester, password }
+ * defaults: { programme_id, year_of_study, semester, password, gender, boarding_status }
  */
 exports.importUsersMapped = async (req, res) => {
   try {
@@ -582,6 +815,8 @@ exports.importUsersMapped = async (req, res) => {
     const defaultProgrammeId = await resolveProgrammeId(defaults.programme_id);
     const defaultYear = parseYearOfStudy(defaults.year_of_study);
     const defaultSemester = parseSemester(defaults.semester);
+    const defaultGender = parseGender(defaults.gender);
+    const defaultBoarding = parseBoardingStatus(defaults.boarding_status);
 
     const dataRows = [];
     for (let i = 1; i < matrix.length; i++) {
@@ -603,6 +838,8 @@ exports.importUsersMapped = async (req, res) => {
       const programmeValue = get("programme");
       const yearValue = get("year_of_study");
       const semesterValue = get("semester");
+      const genderValue = get("gender");
+      const boardingValue = get("boarding_status");
 
       if (!email && !full_name && !admission_number && !phone) continue;
 
@@ -616,6 +853,8 @@ exports.importUsersMapped = async (req, res) => {
         programmeValue,
         yearValue,
         semesterValue,
+        genderValue,
+        boardingValue,
       });
     }
 
@@ -648,6 +887,8 @@ exports.importUsersMapped = async (req, res) => {
         programmeValue,
         yearValue,
         semesterValue,
+        genderValue,
+        boardingValue,
       } = row;
 
       if (!email || !full_name || !admission_number) {
@@ -662,6 +903,8 @@ exports.importUsersMapped = async (req, res) => {
         (await resolveProgrammeId(programmeValue)) || defaultProgrammeId;
       const year_of_study = parseYearOfStudy(yearValue) ?? defaultYear;
       const semester = parseSemester(semesterValue) ?? defaultSemester;
+      const gender = parseGender(genderValue) || defaultGender;
+      const boarding_status = parseBoardingStatus(boardingValue) || defaultBoarding;
 
       const enrolErr = studentEnrolmentError("student", {
         programme_id,
@@ -670,6 +913,12 @@ exports.importUsersMapped = async (req, res) => {
       });
       if (enrolErr) {
         errors.push({ row: excelRow, message: enrolErr });
+        continue;
+      }
+
+      const demoErr = studentDemographicsError("student", { gender, boarding_status });
+      if (demoErr) {
+        errors.push({ row: excelRow, message: demoErr });
         continue;
       }
 
@@ -708,6 +957,8 @@ exports.importUsersMapped = async (req, res) => {
           programme_id,
           year_of_study,
           semester,
+          gender,
+          boarding_status,
           profile_image: null,
           is_public: false,
           position: null,
@@ -922,10 +1173,24 @@ exports.listUsers = async (req, res) => {
     const roleFilter = normalizeRole(req.query.role);
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const search = String(req.query.search || req.query.q || "").trim();
 
     const where = {};
     if (roleFilter && ALL_USER_ROLES.includes(roleFilter)) {
       where.role = roleFilter;
+    } else {
+      const excludeRole = normalizeRole(req.query.exclude_role);
+      if (excludeRole && ALL_USER_ROLES.includes(excludeRole)) {
+        where.role = { [Op.ne]: excludeRole };
+      }
+    }
+    if (search) {
+      where[Op.or] = [
+        { full_name: { [Op.iLike]: `%${search}%` } },
+        { email: { [Op.iLike]: `%${search}%` } },
+        { admission_number: { [Op.iLike]: `%${search}%` } },
+        { phone: { [Op.iLike]: `%${search}%` } },
+      ];
     }
 
     const offset = (page - 1) * limit;
@@ -947,6 +1212,70 @@ exports.listUsers = async (req, res) => {
         page,
         limit,
         totalPages: Math.max(1, Math.ceil(count / limit)),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Student dashboard aggregates for gender + boarding bar charts.
+ * GET /api/users/students/dashboard
+ */
+exports.studentDashboardStats = async (req, res) => {
+  try {
+    const total = await User.count({ where: { role: "student" } });
+    const active = await User.count({ where: { role: "student", is_active: true } });
+    const inactive = Math.max(0, total - active);
+
+    const [genderRows, boardingRows] = await Promise.all([
+      User.findAll({
+        attributes: ["gender", [fn("COUNT", col("id")), "count"]],
+        where: { role: "student" },
+        group: ["gender"],
+        raw: true,
+      }),
+      User.findAll({
+        attributes: ["boarding_status", [fn("COUNT", col("id")), "count"]],
+        where: { role: "student" },
+        group: ["boarding_status"],
+        raw: true,
+      }),
+    ]);
+
+    const genderMap = { male: 0, female: 0, unspecified: 0 };
+    for (const row of genderRows) {
+      const key = parseGender(row.gender) || "unspecified";
+      const count = Number(row.count) || 0;
+      if (key === "male" || key === "female") genderMap[key] += count;
+      else genderMap.unspecified += count;
+    }
+
+    const boardingMap = { boarder: 0, non_boarder: 0, unspecified: 0 };
+    for (const row of boardingRows) {
+      const key = parseBoardingStatus(row.boarding_status) || "unspecified";
+      const count = Number(row.count) || 0;
+      if (key === "boarder" || key === "non_boarder") boardingMap[key] += count;
+      else boardingMap.unspecified += count;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        total,
+        active,
+        inactive,
+        gender: [
+          { key: "male", label: "Male", count: genderMap.male },
+          { key: "female", label: "Female", count: genderMap.female },
+          { key: "unspecified", label: "Unspecified", count: genderMap.unspecified },
+        ],
+        boarding: [
+          { key: "boarder", label: "Boarder", count: boardingMap.boarder },
+          { key: "non_boarder", label: "Non-boarder", count: boardingMap.non_boarder },
+          { key: "unspecified", label: "Unspecified", count: boardingMap.unspecified },
+        ],
       },
     });
   } catch (error) {
@@ -1018,6 +1347,8 @@ exports.createUser = async (req, res) => {
       year_of_study: yearRaw,
       semester: semesterRaw,
       department_id: departmentIdRaw,
+      gender: genderRaw,
+      boarding_status: boardingRaw,
     } = req.body;
     const normalizedRole = normalizeRole(role);
 
@@ -1053,11 +1384,15 @@ exports.createUser = async (req, res) => {
     let year_of_study = null;
     let semester = null;
     let department_id = null;
+    let gender = null;
+    let boarding_status = null;
 
     if (normalizedRole === "student") {
       programme_id = await resolveProgrammeId(programmeIdRaw || programme);
       year_of_study = parseYearOfStudy(yearRaw);
       semester = parseSemester(semesterRaw);
+      gender = parseGender(genderRaw);
+      boarding_status = parseBoardingStatus(boardingRaw);
       const enrolErr = studentEnrolmentError(normalizedRole, {
         programme_id,
         year_of_study,
@@ -1065,6 +1400,10 @@ exports.createUser = async (req, res) => {
       });
       if (enrolErr) {
         return res.status(400).json({ success: false, message: enrolErr });
+      }
+      const demoErr = studentDemographicsError(normalizedRole, { gender, boarding_status });
+      if (demoErr) {
+        return res.status(400).json({ success: false, message: demoErr });
       }
     } else {
       department_id = await resolveDepartmentId(departmentIdRaw);
@@ -1108,6 +1447,8 @@ exports.createUser = async (req, res) => {
       department_id: normalizedRole === "student" ? null : department_id,
       year_of_study: normalizedRole === "student" ? year_of_study : null,
       semester: normalizedRole === "student" ? semester : null,
+      gender: normalizedRole === "student" ? gender : null,
+      boarding_status: normalizedRole === "student" ? boarding_status : null,
       profile_image: imageFilename,
       is_public:
         normalizedRole === "student"
@@ -1154,6 +1495,8 @@ exports.updateUser = async (req, res) => {
       "department_id",
       "year_of_study",
       "semester",
+      "gender",
+      "boarding_status",
     ];
     const patch = {};
     for (const key of allowed) {
@@ -1179,6 +1522,12 @@ exports.updateUser = async (req, res) => {
     }
     if (patch.semester !== undefined) {
       patch.semester = parseSemester(patch.semester);
+    }
+    if (patch.gender !== undefined) {
+      patch.gender = parseGender(patch.gender);
+    }
+    if (patch.boarding_status !== undefined) {
+      patch.boarding_status = parseBoardingStatus(patch.boarding_status);
     }
 
     if (req.body.role !== undefined) {
@@ -1219,6 +1568,8 @@ exports.updateUser = async (req, res) => {
       patch.programme_id = null;
       patch.year_of_study = null;
       patch.semester = null;
+      patch.gender = null;
+      patch.boarding_status = null;
     } else {
       patch.department_id = null;
       if (patch.admission_number !== undefined) {
@@ -1236,6 +1587,14 @@ exports.updateUser = async (req, res) => {
       });
       if (enrolErr) {
         return res.status(400).json({ success: false, message: enrolErr });
+      }
+      const demoErr = studentDemographicsError(effectiveRole, {
+        gender: patch.gender !== undefined ? patch.gender : user.gender,
+        boarding_status:
+          patch.boarding_status !== undefined ? patch.boarding_status : user.boarding_status,
+      });
+      if (demoErr) {
+        return res.status(400).json({ success: false, message: demoErr });
       }
     }
 
