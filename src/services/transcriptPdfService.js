@@ -79,14 +79,16 @@ function write(doc, text, x, y, opts = {}) {
     bold = false,
     align = "left",
     height,
+    wrap = false,
   } = opts;
   doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(size).fillColor(color);
+  const shouldWrap = wrap || Boolean(height && height > size + 4);
   doc.text(String(text ?? ""), x, y, {
     width,
-    height,
+    height: shouldWrap ? height : undefined,
     align,
-    ellipsis: Boolean(height),
-    lineBreak: Boolean(height && height > size + 4),
+    ellipsis: !shouldWrap && Boolean(width),
+    lineBreak: shouldWrap,
   });
 }
 
@@ -99,9 +101,26 @@ function drawDashedLine(doc, x1, y, x2) {
 }
 
 function metaRow(doc, label, value, x, y, labelW, valueW) {
-  write(doc, `${label}:`, x, y, { size: 9, bold: true, width: labelW });
-  write(doc, safeText(value, 90) || "—", x + labelW, y, { size: 9, width: valueW });
-  return y + 14;
+  const labelText = `${label}:`;
+  const valueText = safeText(value, 160) || "—";
+
+  doc.font("Helvetica-Bold").fontSize(9);
+  const labelH = doc.heightOfString(labelText, { width: labelW });
+  doc.font("Helvetica").fontSize(9);
+  const valueH = Math.max(
+    doc.heightOfString(valueText, { width: Math.max(24, valueW) }),
+    11
+  );
+  const rowH = Math.max(labelH, valueH) + 4;
+
+  write(doc, labelText, x, y, { size: 9, bold: true, width: labelW, wrap: true, height: rowH });
+  write(doc, valueText, x + labelW, y, {
+    size: 9,
+    width: Math.max(24, valueW),
+    wrap: true,
+    height: rowH,
+  });
+  return y + rowH;
 }
 
 /**
