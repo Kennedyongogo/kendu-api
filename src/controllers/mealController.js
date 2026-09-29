@@ -372,12 +372,26 @@ exports.scanToday = async (req, res) => {
       raw: true,
     });
     const byMeal = Object.fromEntries(counts.map((c) => [c.meal_code, Number(c.count) || 0]));
+    const mine = await MealServing.findAll({
+      where: { service_date: now.date, served_by: req.user.id, method: "qr" },
+      attributes: ["meal_code", [sequelize.fn("COUNT", sequelize.col("id")), "count"]],
+      group: ["meal_code"],
+      raw: true,
+    });
+    const myByMeal = { B: 0, L: 0, S: 0 };
+    mine.forEach((c) => {
+      myByMeal[c.meal_code] = Number(c.count) || 0;
+    });
     return res.json({
       success: true,
       data: {
         server_date: now.date,
         server_time: now.time,
         timezone: meals.SCHOOL_TZ,
+        my_scans: {
+          total: myByMeal.B + myByMeal.L + myByMeal.S,
+          by_meal: myByMeal,
+        },
         current_meal: open ? { code: open.meal_code, name: open.name, start_time: open.start_time, end_time: open.end_time } : null,
         next_meal: next ? { code: next.meal_code, name: next.name, start_time: next.start_time, end_time: next.end_time } : null,
         windows: windows.map((w) => ({ ...w, served_count: byMeal[w.meal_code] || 0 })),

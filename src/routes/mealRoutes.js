@@ -5,6 +5,7 @@ const {
   authorizeRoles,
   PUBLIC_PORTAL_ALLOWED_ROLES,
   CATERING_APP_ROLES,
+  MOBILE_APP_ROLES,
   ADMIN_PORTAL_API_ROLES,
   SCHOOL_ADMIN_ROLES,
 } = require("../middleware/auth");
@@ -12,7 +13,10 @@ const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
 const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
-const cateringApp = [authenticateUser, authorizeRoles(CATERING_APP_ROLES)];
+const cateringApp = [
+  authenticateUser,
+  authorizeRoles([...new Set([...CATERING_APP_ROLES, ...MOBILE_APP_ROLES])]),
+];
 const markers = [
   authenticateUser,
   authorizeRoles([...new Set([...CATERING_APP_ROLES, ...ADMIN_PORTAL_API_ROLES])]),
