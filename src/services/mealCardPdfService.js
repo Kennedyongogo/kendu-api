@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
 const sharp = require("sharp");
+const QRCode = require("qrcode");
 
 const BRAND = {
   short: "KASMS",
@@ -91,6 +92,26 @@ async function coverPhotoBuffer(profilePath, widthPt, heightPt) {
     .toBuffer();
 }
 
+/** Largest font size (down to minSize) at which `text` fits `maxWidth`; truncates if still too long. */
+function fitText(doc, text, maxWidth, size, minSize, bold = true) {
+  doc.font(bold ? "Helvetica-Bold" : "Helvetica");
+  let s = size;
+  while (s > minSize && doc.fontSize(s).widthOfString(text) > maxWidth) s -= 0.5;
+  let out = text;
+  doc.fontSize(s);
+  while (out.length > 4 && doc.widthOfString(out) > maxWidth) out = `${out.slice(0, -4)}...`;
+  return { text: out, size: s };
+}
+
+async function qrPngBuffer(payload) {
+  return QRCode.toBuffer(payload, {
+    errorCorrectionLevel: "M",
+    margin: 2,
+    width: 360,
+    color: { dark: "#0b1f3a", light: "#ffffff" },
+  });
+}
+
 function buildMonthDayColumns(date = new Date()) {
   const year = date.getFullYear();
   const month = date.getMonth();
@@ -106,7 +127,7 @@ function buildMonthDayColumns(date = new Date()) {
   return { monthLabel, columns: columns.slice(0, 3) };
 }
 
-function drawMealLogBack(doc) {
+function drawMealLogBack(doc, served = {}) {
   const W = CR80.width;
   const H = CR80.height;
   const { monthLabel, columns } = buildMonthDayColumns(new Date());
@@ -130,7 +151,7 @@ function drawMealLogBack(doc) {
     color: BRAND.white,
     width: 150,
   });
-  write(doc, "Mark when served", W - 78, H - 10, {
+  write(doc, "Filled = served", W - 78, H - 10, {
     size: 5,
     bold: true,
     color: BRAND.gold,
@@ -174,24 +195,38 @@ function drawMealLogBack(doc) {
         width: cellW,
         align: "center",
       });
-      for (let m = 1; m <= 3; m += 1) {
-        const bx = x + m * cellW + cellW / 2 - 3;
+      const dayServed = served[String(day)] || {};
+      ["B", "L", "S"].forEach((meal, idx) => {
+        const bx = x + (idx + 1) * cellW + cellW / 2 - 3;
         const by = y + Math.max(0, (rowH - 6) / 2);
-        doc.lineWidth(0.6).rect(bx, by, 6, 6).stroke(BRAND.green);
-      }
+        if (dayServed[meal]) {
+          doc.rect(bx, by, 6, 6).fill(BRAND.green);
+          doc
+            .lineWidth(0.8)
+            .moveTo(bx + 1.2, by + 3.1)
+            .lineTo(bx + 2.5, by + 4.5)
+            .lineTo(bx + 4.9, by + 1.5)
+            .stroke(BRAND.white);
+        } else {
+          doc.lineWidth(0.6).rect(bx, by, 6, 6).stroke(BRAND.green);
+        }
+      });
     });
   });
 }
 
 /**
  * @param {object} card — meal card payload from mealController
+ * @param {{ qrPayload?: string, served?: object, version?: number }} [options]
  * @returns {Promise<Buffer>}
  */
-async function buildMealCardPdf(card) {
+async function buildMealCardPdf(card, { qrPayload = null, served = {}, version = null } = {}) {
   const photoX = 16;
   const photoY = 28;
   const photoW = 52;
   const photoH = 62;
+
+  const qrBuffer = qrPayload ? await qrPngBuffer(qrPayload) : null;
 
   let photoBuffer = null;
   const profilePath = resolveProfilePath(card.profile_image);
@@ -270,19 +305,39 @@ async function buildMealCardPdf(card) {
     }
 
     const textX = 76;
-    const textW = W - textX - 8;
-    const fullName = safeText(card.full_name, 26);
-    const admission = safeText(card.admission_number, 22);
-    const programme = safeText(card.programme_name, 36);
+    const fullW = W - textX - 8;
+    const qrSize = 48;
+    const qrX = W - 8 - qrSize;
+    const qrY = 26;
+    const textW = qrBuffer ? qrX - textX - 5 : fullW;
 
-    write(doc, "FULL NAME", textX, 30, { size: 5, color: BRAND.inkMuted, width: textW });
-    write(doc, fullName, textX, 37, { size: 9, bold: true, color: BRAND.navy, width: textW });
+    if (qrBuffer) {
+      doc.roundedRect(qrX - 1, qrY - 1, qrSize + 2, qrSize + 2, 3).fillAndStroke(BRAND.white, "#c5d4e8");
+      doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
+    }
 
-    write(doc, "ADMISSION NO.", textX, 52, { size: 5, color: BRAND.inkMuted, width: textW });
-    write(doc, admission, textX, 59, { size: 9, bold: true, color: BRAND.greenDark, width: textW });
+    const name = fitText(doc, safeText(card.full_name, 40), textW, 9, 6.5);
+    const admission = fitText(doc, safeText(card.admission_number, 24), textW, 9, 7);
+    const programme = fitText(doc, safeText(card.programme_name, 60), fullW, 7, 6);
 
-    write(doc, "PROGRAMME", textX, 74, { size: 5, color: BRAND.inkMuted, width: textW });
-    write(doc, programme, textX, 81, { size: 7, bold: true, color: BRAND.navy, width: textW });
+    write(doc, "FULL NAME", textX, 29, { size: 5, color: BRAND.inkMuted, width: textW });
+    write(doc, name.text, textX, 36, { size: name.size, bold: true, color: BRAND.navy, width: textW });
+
+    write(doc, "ADMISSION NO.", textX, 51, { size: 5, color: BRAND.inkMuted, width: textW });
+    write(doc, admission.text, textX, 58, {
+      size: admission.size,
+      bold: true,
+      color: BRAND.greenDark,
+      width: textW,
+    });
+
+    write(doc, "PROGRAMME", textX, 77, { size: 5, color: BRAND.inkMuted, width: fullW });
+    write(doc, programme.text, textX, 84, {
+      size: programme.size,
+      bold: true,
+      color: BRAND.navy,
+      width: fullW,
+    });
 
     const yearLine = [
       card.year_of_study ? `Y${card.year_of_study}` : null,
@@ -297,7 +352,10 @@ async function buildMealCardPdf(card) {
       color: BRAND.white,
       width: W - 80,
     });
-    write(doc, `Issued ${safeText(card.issued_on, 18)}`, 16, H - 12, {
+    const issuedLine = version
+      ? `Issued ${safeText(card.issued_on, 18)}  |  Card #${version}`
+      : `Issued ${safeText(card.issued_on, 18)}`;
+    write(doc, issuedLine, 16, H - 12, {
       size: 5,
       color: BRAND.gold,
       width: W - 80,
@@ -316,7 +374,7 @@ async function buildMealCardPdf(card) {
       align: "right",
     });
 
-    drawMealLogBack(doc);
+    drawMealLogBack(doc, served);
     doc.end();
   });
 }

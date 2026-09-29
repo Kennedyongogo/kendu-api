@@ -36,6 +36,13 @@ const LibraryLoan = require("./libraryLoan")(sequelize);
 const LibraryElearning = require("./libraryElearning")(sequelize);
 const LibraryService = require("./libraryService")(sequelize);
 const UpcomingActivity = require("./upcomingActivity")(sequelize);
+const MealPeriod = require("./mealPeriod")(sequelize);
+const MealPeriodOverride = require("./mealPeriodOverride")(sequelize);
+const MealCard = require("./mealCard")(sequelize);
+const MealServing = require("./mealServing")(sequelize);
+const MealCardDownload = require("./mealCardDownload")(sequelize);
+const MealDownloadPolicy = require("./mealDownloadPolicy")(sequelize);
+const MealDownloadGrant = require("./mealDownloadGrant")(sequelize);
 
 const models = {
   User,
@@ -73,6 +80,13 @@ const models = {
   LibraryElearning,
   LibraryService,
   UpcomingActivity,
+  MealPeriod,
+  MealPeriodOverride,
+  MealCard,
+  MealServing,
+  MealCardDownload,
+  MealDownloadPolicy,
+  MealDownloadGrant,
 };
 
 const isConnectionReset = (error) => {
@@ -163,6 +177,23 @@ const repairUsersDemographicColumns = async () => {
   }
 };
 
+/** ALTER TYPE ... ADD VALUE must run outside a transaction, so do it before syncing users. */
+const ensureUserRoleValues = async () => {
+  try {
+    await sequelize.query(`
+      DO $roles$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_users_role') THEN
+          ALTER TYPE "public"."enum_users_role" ADD VALUE IF NOT EXISTS 'catering';
+        END IF;
+      END
+      $roles$;
+    `);
+  } catch (error) {
+    console.warn("⚠️ Could not add catering to users.role enum:", error.message);
+  }
+};
+
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
@@ -171,6 +202,7 @@ const initializeModels = async () => {
     console.log("📋 Syncing parent tables...");
     await safeSync(Department);
     await repairUsersDemographicColumns();
+    await ensureUserRoleValues();
     await safeSync(User);
     // alter: true so new programme columns are applied to existing tables
     await safeSync(Programme);
@@ -229,6 +261,13 @@ const initializeModels = async () => {
     await safeSync(LibraryElearning);
     await safeSync(LibraryService);
     await safeSync(UpcomingActivity);
+    await safeSync(MealPeriod);
+    await safeSync(MealPeriodOverride);
+    await safeSync(MealCard);
+    await safeSync(MealServing);
+    await safeSync(MealCardDownload);
+    await safeSync(MealDownloadPolicy);
+    await safeSync(MealDownloadGrant);
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -686,6 +725,14 @@ const setupAssociations = () => {
       foreignKey: "approved_by",
       as: "approver",
     });
+
+    models.MealCard.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
+    models.MealServing.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
+    models.MealServing.belongsTo(models.User, { foreignKey: "served_by", as: "server" });
+    models.MealServing.belongsTo(models.MealCard, { foreignKey: "card_id", as: "card" });
+    models.MealCardDownload.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
+    models.MealPeriodOverride.belongsTo(models.User, { foreignKey: "created_by", as: "creator" });
+    models.MealDownloadGrant.belongsTo(models.User, { foreignKey: "granted_by", as: "granter" });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }

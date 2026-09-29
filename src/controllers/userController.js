@@ -15,6 +15,8 @@ const {
   ADMIN_PORTAL_LOGIN_BLOCKED_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
   ALL_USER_ROLES,
+  CATERING_ROLE,
+  CATERING_APP_ROLES,
 } = require("../middleware/auth");
 
 async function auditLogin(req, { user = null, status = "success", description }) {
@@ -1061,14 +1063,29 @@ exports.login = async (req, res) => {
     }
 
     if (portalNorm === "admin" && ADMIN_PORTAL_LOGIN_BLOCKED_ROLES.includes(user.role)) {
+      const isCatering = user.role === CATERING_ROLE;
       await auditLogin(req, {
         user,
         status: "failed",
-        description: "Login failed: student blocked from admin portal",
+        description: `Login failed: ${user.role} blocked from admin portal`,
       });
       return res.status(403).json({
         success: false,
-        message: "This portal is for school admin and staff only. Students should use the student portal.",
+        message: isCatering
+          ? "Catering accounts sign in through the KASMS meal scanner app."
+          : "This portal is for school admin and staff only. Students should use the student portal.",
+      });
+    }
+
+    if (portalNorm === "catering" && !CATERING_APP_ROLES.includes(user.role)) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: `Login failed: ${user.role} blocked from catering app`,
+      });
+      return res.status(403).json({
+        success: false,
+        message: "The meal scanner app is for catering staff only.",
       });
     }
 
@@ -1366,10 +1383,10 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    if (normalizedRole === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
+    if ([ADMIN_ROLE, CATERING_ROLE].includes(normalizedRole) && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({
         success: false,
-        message: "Only an admin can create admin users",
+        message: `Only an admin can create ${normalizedRole} users`,
       });
     }
 
