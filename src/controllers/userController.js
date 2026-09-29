@@ -17,6 +17,7 @@ const {
   ALL_USER_ROLES,
   CATERING_ROLE,
   CATERING_APP_ROLES,
+  MOBILE_APP_ROLES,
 } = require("../middleware/auth");
 
 async function auditLogin(req, { user = null, status = "success", description }) {
@@ -1086,6 +1087,18 @@ exports.login = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "The meal scanner app is for catering staff only.",
+      });
+    }
+
+    if (portalNorm === "mobile" && !MOBILE_APP_ROLES.includes(user.role)) {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: `Login failed: ${user.role} blocked from KASMS mobile app`,
+      });
+      return res.status(403).json({
+        success: false,
+        message: "The KASMS mobile app is for school administrators only.",
       });
     }
 
