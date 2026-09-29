@@ -10,7 +10,7 @@ const ADMIN_PORTAL_LOGIN_BLOCKED_ROLES = ["student", "catering"];
 const PUBLIC_PORTAL_ALLOWED_ROLES = ["student"];
 const SCHOOL_ADMIN_ROLES = ["admin"];
 const CATERING_APP_ROLES = ["catering", "admin"];
-const MOBILE_APP_ROLES = ["admin"];
+const MOBILE_APP_ROLES = ["admin", "staff", "catering"];
 const ALL_USER_ROLES = ["admin", "staff", "student", "catering"];
 
 exports.ADMIN_ROLE = ADMIN_ROLE;

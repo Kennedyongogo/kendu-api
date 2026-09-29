@@ -1098,7 +1098,7 @@ exports.login = async (req, res) => {
       });
       return res.status(403).json({
         success: false,
-        message: "The KASMS mobile app is for school administrators only.",
+        message: "The KASMS mobile app is for school staff. Students should use the student portal.",
       });
     }
 
