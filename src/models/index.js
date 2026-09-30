@@ -45,6 +45,9 @@ const MealDownloadPolicy = require("./mealDownloadPolicy")(sequelize);
 const MealDownloadGrant = require("./mealDownloadGrant")(sequelize);
 const AttendanceSession = require("./attendanceSession")(sequelize);
 const AttendanceRecord = require("./attendanceRecord")(sequelize);
+const ChurchService = require("./churchService")(sequelize);
+const ChurchBooking = require("./churchBooking")(sequelize);
+const Notification = require("./notification")(sequelize);
 
 const models = {
   User,
@@ -91,6 +94,9 @@ const models = {
   MealDownloadGrant,
   AttendanceSession,
   AttendanceRecord,
+  ChurchService,
+  ChurchBooking,
+  Notification,
 };
 
 const isConnectionReset = (error) => {
@@ -274,6 +280,9 @@ const initializeModels = async () => {
     await safeSync(MealDownloadGrant);
     await safeSync(AttendanceSession);
     await safeSync(AttendanceRecord);
+    await safeSync(ChurchService);
+    await safeSync(ChurchBooking);
+    await safeSync(Notification);
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -749,6 +758,14 @@ const setupAssociations = () => {
     });
     models.AttendanceRecord.belongsTo(models.AttendanceSession, { foreignKey: "session_id", as: "session" });
     models.AttendanceRecord.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
+
+    models.ChurchService.belongsTo(models.User, { foreignKey: "created_by", as: "creator" });
+    models.ChurchService.belongsTo(models.User, { foreignKey: "reviewed_by", as: "reviewer" });
+    models.ChurchService.hasMany(models.ChurchBooking, { foreignKey: "service_id", as: "bookings" });
+    models.ChurchBooking.belongsTo(models.ChurchService, { foreignKey: "service_id", as: "service" });
+    models.ChurchBooking.belongsTo(models.User, { foreignKey: "user_id", as: "user" });
+    models.ChurchBooking.belongsTo(models.User, { foreignKey: "checked_by", as: "checker" });
+    models.Notification.belongsTo(models.User, { foreignKey: "user_id", as: "user" });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }
