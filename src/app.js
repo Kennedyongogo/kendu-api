@@ -141,6 +141,8 @@ app.use("/api/exam-timetables", examTimetableRoutes);
 app.use("/api/cohort-transfer", require("./routes/cohortTransferRoutes"));
 app.use("/api/transcripts", require("./routes/transcriptRoutes"));
 app.use("/api/library", require("./routes/libraryRoutes"));
+// GET /api/attendance/semesters  (mobile app: year/semester groups with active students)
+app.use("/api/attendance", require("./routes/attendanceRoutes"));
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {
