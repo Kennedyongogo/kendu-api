@@ -8,6 +8,7 @@ const SCHOOL_TZ = process.env.SCHOOL_TIMEZONE || "Africa/Nairobi";
 const MANAGER_ROLES = ["admin", "staff"];
 const SHAPE_TYPES = [
   "room",
+  "cross",
   "stage",
   "pulpit",
   "altar",
@@ -67,6 +68,23 @@ function finite(value, field) {
   return Math.round(n * 10) / 10;
 }
 
+const CROSS_WALL_KEYS = ["hl", "hr", "fl", "fr", "lt", "lb", "rt", "rb"];
+
+/**
+ * Wall positions of a cross-shaped hall as fractions of its box: head (hl/hr) and foot (fl/fr) side walls,
+ * and the front/back walls of the left (lt/lb) and right (rt/rb) arms. Missing keys fall back to the default cross.
+ */
+function normalizeCross(raw) {
+  const out = {};
+  for (const key of CROSS_WALL_KEYS) {
+    if (raw[key] === undefined || raw[key] === null) continue;
+    const n = Number(raw[key]);
+    if (!Number.isFinite(n)) throw httpError(400, `Cross wall "${key}" must be a number.`);
+    out[key] = Math.round(Math.min(Math.max(n, 0), 1) * 1e6) / 1e6;
+  }
+  return out;
+}
+
 /** Validates and normalises a layout coming from the designer. */
 function normalizeLayout(raw) {
   if (!raw || typeof raw !== "object") throw httpError(400, "Layout is missing.");
@@ -82,7 +100,7 @@ function normalizeLayout(raw) {
   const shapes = shapesIn.map((s, i) => {
     const type = String(s?.type || "");
     if (!SHAPE_TYPES.includes(type)) throw httpError(400, `Shape ${i + 1} has an unknown type "${type}".`);
-    return {
+    const shape = {
       id: String(s.id || `shape-${i + 1}`).slice(0, 40),
       type,
       x: finite(s.x, "x"),
@@ -91,6 +109,8 @@ function normalizeLayout(raw) {
       h: Math.max(finite(s.h, "h"), 4),
       label: cleanText(s.label, 60) ?? null,
     };
+    if (type === "cross" && s.cross && typeof s.cross === "object") shape.cross = normalizeCross(s.cross);
+    return shape;
   });
 
   const ids = new Set();
