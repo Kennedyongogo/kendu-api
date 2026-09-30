@@ -43,6 +43,8 @@ const MealServing = require("./mealServing")(sequelize);
 const MealCardDownload = require("./mealCardDownload")(sequelize);
 const MealDownloadPolicy = require("./mealDownloadPolicy")(sequelize);
 const MealDownloadGrant = require("./mealDownloadGrant")(sequelize);
+const AttendanceSession = require("./attendanceSession")(sequelize);
+const AttendanceRecord = require("./attendanceRecord")(sequelize);
 
 const models = {
   User,
@@ -87,6 +89,8 @@ const models = {
   MealCardDownload,
   MealDownloadPolicy,
   MealDownloadGrant,
+  AttendanceSession,
+  AttendanceRecord,
 };
 
 const isConnectionReset = (error) => {
@@ -268,6 +272,8 @@ const initializeModels = async () => {
     await safeSync(MealCardDownload);
     await safeSync(MealDownloadPolicy);
     await safeSync(MealDownloadGrant);
+    await safeSync(AttendanceSession);
+    await safeSync(AttendanceRecord);
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -733,6 +739,16 @@ const setupAssociations = () => {
     models.MealCardDownload.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
     models.MealPeriodOverride.belongsTo(models.User, { foreignKey: "created_by", as: "creator" });
     models.MealDownloadGrant.belongsTo(models.User, { foreignKey: "granted_by", as: "granter" });
+
+    models.AttendanceSession.belongsTo(models.User, { foreignKey: "taken_by", as: "teacher" });
+    models.AttendanceSession.belongsTo(models.Programme, { foreignKey: "programme_id", as: "programme" });
+    models.AttendanceSession.hasMany(models.AttendanceRecord, {
+      foreignKey: "session_id",
+      as: "records",
+      onDelete: "CASCADE",
+    });
+    models.AttendanceRecord.belongsTo(models.AttendanceSession, { foreignKey: "session_id", as: "session" });
+    models.AttendanceRecord.belongsTo(models.User, { foreignKey: "student_id", as: "student" });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }
