@@ -18,12 +18,12 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  STAFF_CHAT_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
-const portalStaff = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const portalStaff = [authenticateUser, authorizeRoles(STAFF_CHAT_ROLES)];
 
 const uploadPath = path.join(__dirname, "..", "..", "uploads", "staff-chat");
 if (!fs.existsSync(uploadPath)) {

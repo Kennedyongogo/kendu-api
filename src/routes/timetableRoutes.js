@@ -10,7 +10,8 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  READ_TIMETABLE_ROLES,
+  WRITE_TIMETABLE_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
@@ -27,31 +28,31 @@ router.get(
 router.get(
   "/",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_TIMETABLE_ROLES),
   listEntries
 );
 router.post(
   "/",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_TIMETABLE_ROLES),
   createEntry
 );
 router.get(
   "/:id",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_TIMETABLE_ROLES),
   getEntry
 );
 router.put(
   "/:id",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_TIMETABLE_ROLES),
   updateEntry
 );
 router.delete(
   "/:id",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_TIMETABLE_ROLES),
   deleteEntry
 );
 

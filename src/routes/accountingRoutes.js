@@ -14,7 +14,8 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  READ_FEE_ROLES,
+  WRITE_FEE_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
@@ -46,37 +47,37 @@ router.post(
 router.get(
   "/dashboard/collections",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_FEE_ROLES),
   getCollectionAnalytics
 );
 router.get(
   "/dashboard",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_FEE_ROLES),
   getAccountingDashboard
 );
 router.get(
   "/payments",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_FEE_ROLES),
   listPayments
 );
 router.post(
   "/payments",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_FEE_ROLES),
   recordPayment
 );
 router.get(
   "/students",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_FEE_ROLES),
   listAccountingStudents
 );
 router.get(
   "/students/:studentId",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_FEE_ROLES),
   getStudentLedger
 );
 

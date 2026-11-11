@@ -5,19 +5,23 @@ const fs = require("fs");
 const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
 const { QueryTypes, Op, fn, col, where: sqlWhere } = require("sequelize");
-const { User, Programme, Department, sequelize } = require("../models");
+const { User, Programme, Department, ProgrammeDepartment, UserDepartment, sequelize } = require("../models");
 const config = require("../config/config");
 const { logFromRequest, getIpAddress } = require("../middleware/auditLogger");
 const {
   ADMIN_ROLE,
-  STAFF_ROLES,
-  ADMIN_PORTAL_API_ROLES,
   ADMIN_PORTAL_LOGIN_BLOCKED_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
   ALL_USER_ROLES,
   CATERING_ROLE,
   CATERING_APP_ROLES,
   MOBILE_APP_ROLES,
+  READ_STUDENT_ROLES,
+  WRITE_STUDENT_ROLES,
+  WRITE_BOARDING_ROLES,
+  DEPARTMENT_SCOPED_ROLES,
+  PORTAL_ROLES,
+  getActorDepartmentIds,
 } = require("../middleware/auth");
 
 async function auditLogin(req, { user = null, status = "success", description }) {
@@ -109,6 +113,16 @@ const departmentInclude = {
   required: false,
 };
 
+const departmentsInclude = {
+  model: Department,
+  as: "departments",
+  attributes: ["id", "name", "code", "is_active"],
+  through: { attributes: [] },
+  required: false,
+};
+
+const userDetailIncludes = [programmeInclude, departmentInclude, departmentsInclude];
+
 function parseYearOfStudy(value) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
   const n = parseInt(String(value).replace(/[^0-9]/g, ""), 10);
@@ -170,6 +184,69 @@ async function resolveDepartmentId(value) {
     where: sqlWhere(fn("LOWER", col("name")), raw.toLowerCase()),
   });
   return byName ? byName.id : null;
+}
+
+function parseDepartmentIds(body) {
+  const raw =
+    body.department_ids !== undefined
+      ? body.department_ids
+      : body.department_id !== undefined
+        ? body.department_id
+        : undefined;
+  if (raw === undefined) return undefined;
+
+  let list = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      list = JSON.parse(trimmed);
+    } catch {
+      list = trimmed.split(/[,|]/).map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  if (!Array.isArray(list)) list = [list];
+
+  return [
+    ...new Set(
+      list
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+async function assertDepartmentsExist(departmentIds) {
+  if (!departmentIds.length) return [];
+  const rows = await Department.findAll({
+    where: { id: departmentIds },
+    attributes: ["id"],
+  });
+  if (rows.length !== departmentIds.length) {
+    const err = new Error("One or more selected departments were not found");
+    err.status = 400;
+    throw err;
+  }
+  return departmentIds;
+}
+
+async function setUserDepartments(user, departmentIds, transaction) {
+  if (typeof user.setDepartments === "function") {
+    await user.setDepartments(departmentIds, { transaction });
+    return;
+  }
+  await UserDepartment.destroy({
+    where: { user_id: user.id },
+    transaction,
+  });
+  if (!departmentIds.length) return;
+  await UserDepartment.bulkCreate(
+    departmentIds.map((department_id) => ({
+      user_id: user.id,
+      department_id,
+    })),
+    { transaction }
+  );
 }
 
 function studentEnrolmentError(role, { programme_id, year_of_study, semester }) {
@@ -253,6 +330,17 @@ const sanitizeUser = (user) => {
   const plain = user.get ? user.get({ plain: true }) : { ...user };
   delete plain.password_hash;
   plain.profile_image_url = profileImagePath(plain.profile_image);
+  if (Array.isArray(plain.departments)) {
+    plain.department_ids = plain.departments.map((d) => d.id);
+  } else if (!Array.isArray(plain.department_ids)) {
+    plain.department_ids = plain.department_id ? [plain.department_id] : [];
+  }
+  if (!plain.department && plain.departments?.length) {
+    plain.department = plain.departments[0];
+  }
+  if (!plain.department_id && plain.department_ids.length) {
+    plain.department_id = plain.department_ids[0];
+  }
   return plain;
 };
 
@@ -1064,7 +1152,6 @@ exports.login = async (req, res) => {
     }
 
     if (portalNorm === "admin" && ADMIN_PORTAL_LOGIN_BLOCKED_ROLES.includes(user.role)) {
-      const isCatering = user.role === CATERING_ROLE;
       await auditLogin(req, {
         user,
         status: "failed",
@@ -1072,9 +1159,8 @@ exports.login = async (req, res) => {
       });
       return res.status(403).json({
         success: false,
-        message: isCatering
-          ? "Catering accounts sign in through the KASMS meal scanner app."
-          : "This portal is for school admin and staff only. Students should use the student portal.",
+        message:
+          "This portal is for school admin and staff only. Students should use the student portal.",
       });
     }
 
@@ -1121,9 +1207,14 @@ exports.login = async (req, res) => {
       description: `Login success (${portalNorm || "unspecified"} portal)`,
     });
 
+    const full = await User.findByPk(user.id, {
+      attributes: { exclude: ["password_hash"] },
+      include: userDetailIncludes,
+    });
+
     return res.json({
       success: true,
-      data: { user: sanitizeUser(user), token: signToken(user) },
+      data: { user: sanitizeUser(full || user), token: signToken(user) },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -1190,13 +1281,31 @@ exports.me = async (req, res) => {
   try {
     const user = await User.findByPk(req.user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude, departmentInclude],
+      include: userDetailIncludes,
     });
     return res.json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+async function departmentStudentError(actor, student) {
+  if (!DEPARTMENT_SCOPED_ROLES.includes(actor.role)) return null;
+  const departmentIds = getActorDepartmentIds(actor);
+  if (!departmentIds.length) {
+    return "Your account has no department assigned. Contact an admin.";
+  }
+  if (!student || student.role !== "student" || !student.programme_id) {
+    return "You can only open students in your department";
+  }
+  const link = await ProgrammeDepartment.findOne({
+    where: {
+      programme_id: student.programme_id,
+      department_id: { [Op.in]: departmentIds },
+    },
+  });
+  return link ? null : "This student is outside your department";
+}
 
 exports.listUsers = async (req, res) => {
   try {
@@ -1206,7 +1315,24 @@ exports.listUsers = async (req, res) => {
     const search = String(req.query.search || req.query.q || "").trim();
 
     const where = {};
-    if (roleFilter && ALL_USER_ROLES.includes(roleFilter)) {
+    if (DEPARTMENT_SCOPED_ROLES.includes(req.user.role)) {
+      const departmentIds = getActorDepartmentIds(req.user);
+      if (!departmentIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Your account has no department assigned. Contact an admin.",
+        });
+      }
+      const links = await ProgrammeDepartment.findAll({
+        where: { department_id: { [Op.in]: departmentIds } },
+        attributes: ["programme_id"],
+      });
+      const programmeIds = [...new Set(links.map((link) => link.programme_id))];
+      where.role = "student";
+      where.programme_id = {
+        [Op.in]: programmeIds.length ? programmeIds : ["00000000-0000-0000-0000-000000000000"],
+      };
+    } else if (roleFilter && ALL_USER_ROLES.includes(roleFilter)) {
       where.role = roleFilter;
     } else {
       const excludeRole = normalizeRole(req.query.exclude_role);
@@ -1227,7 +1353,7 @@ exports.listUsers = async (req, res) => {
     const { count, rows } = await User.findAndCountAll({
       where,
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude, departmentInclude],
+      include: userDetailIncludes,
       order: [["created_at", "DESC"]],
       limit,
       offset,
@@ -1320,7 +1446,7 @@ exports.listPublicStaff = async (req, res) => {
       where: {
         is_public: true,
         is_active: true,
-        role: { [Op.in]: ["admin", "staff"] },
+        role: { [Op.in]: PORTAL_ROLES },
       },
       attributes: ["id", "full_name", "role", "position", "phone", "profile_image", "created_at"],
       order: [
@@ -1344,15 +1470,19 @@ exports.listPublicStaff = async (req, res) => {
 
 exports.getUserById = async (req, res) => {
   try {
-    if (req.params.id !== req.user.id && !ADMIN_PORTAL_API_ROLES.includes(req.user.role)) {
+    if (req.params.id !== req.user.id && !READ_STUDENT_ROLES.includes(req.user.role)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude, departmentInclude],
+      include: userDetailIncludes,
     });
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
+    }
+    if (req.params.id !== req.user.id && DEPARTMENT_SCOPED_ROLES.includes(req.user.role)) {
+      const scopeError = await departmentStudentError(req.user, user);
+      if (scopeError) return res.status(403).json({ success: false, message: scopeError });
     }
     return res.json({ success: true, data: sanitizeUser(user) });
   } catch (error) {
@@ -1396,6 +1526,16 @@ exports.createUser = async (req, res) => {
       });
     }
 
+    if (
+      ["secretary", "academic_registrar"].includes(req.user.role) &&
+      normalizedRole !== "student"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "This office can create student accounts only",
+      });
+    }
+
     if ([ADMIN_ROLE, CATERING_ROLE].includes(normalizedRole) && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({
         success: false,
@@ -1414,6 +1554,7 @@ exports.createUser = async (req, res) => {
     let year_of_study = null;
     let semester = null;
     let department_id = null;
+    let department_ids = [];
     let gender = null;
     let boarding_status = null;
 
@@ -1436,9 +1577,28 @@ exports.createUser = async (req, res) => {
         return res.status(400).json({ success: false, message: demoErr });
       }
     } else {
-      department_id = await resolveDepartmentId(departmentIdRaw);
-      if (departmentIdRaw && !department_id) {
-        return res.status(400).json({ success: false, message: "Selected department was not found" });
+      try {
+        department_ids = await assertDepartmentsExist(parseDepartmentIds(req.body) || []);
+      } catch (deptErr) {
+        return res.status(deptErr.status || 400).json({
+          success: false,
+          message: deptErr.message || "Selected department was not found",
+        });
+      }
+      // Legacy single department_id still accepted when department_ids omitted empty.
+      if (!department_ids.length && departmentIdRaw) {
+        const resolved = await resolveDepartmentId(departmentIdRaw);
+        if (!resolved) {
+          return res.status(400).json({ success: false, message: "Selected department was not found" });
+        }
+        department_ids = [resolved];
+      }
+      department_id = department_ids[0] || null;
+      if (DEPARTMENT_SCOPED_ROLES.includes(normalizedRole) && !department_ids.length) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one department is required for a head of department or lecturer",
+        });
       }
     }
 
@@ -1486,9 +1646,13 @@ exports.createUser = async (req, res) => {
           : is_public === true || is_public === "true",
     });
 
+    if (normalizedRole !== "student") {
+      await setUserDepartments(user, department_ids);
+    }
+
     const full = await User.findByPk(user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude, departmentInclude],
+      include: userDetailIncludes,
     });
 
     return res.status(201).json({ success: true, data: sanitizeUser(full) });
@@ -1499,13 +1663,31 @@ exports.createUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    if (req.params.id !== req.user.id && !ADMIN_PORTAL_API_ROLES.includes(req.user.role)) {
+    if (req.params.id !== req.user.id && !WRITE_BOARDING_ROLES.includes(req.user.role)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
     const user = await User.findByPk(req.params.id);
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (
+      ["secretary", "academic_registrar"].includes(req.user.role) &&
+      req.user.id !== user.id &&
+      user.role !== "student"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "This office can update student records only",
+      });
+    }
+
+    if (req.user.role === "dean" && req.user.id !== user.id && user.role !== "student") {
+      return res.status(403).json({
+        success: false,
+        message: "Deans can update student boarding status only",
+      });
     }
 
     if (user.role === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
@@ -1539,12 +1721,17 @@ exports.updateUser = async (req, res) => {
       patch.programme_id = (await resolveProgrammeId(patch.programme_id)) || null;
     }
 
-    if (patch.department_id !== undefined) {
-      const resolvedDept = await resolveDepartmentId(patch.department_id);
-      if (patch.department_id && !resolvedDept) {
-        return res.status(400).json({ success: false, message: "Selected department was not found" });
+    let nextDepartmentIds;
+    if (req.body.department_ids !== undefined || req.body.department_id !== undefined) {
+      try {
+        nextDepartmentIds = await assertDepartmentsExist(parseDepartmentIds(req.body) || []);
+      } catch (deptErr) {
+        return res.status(deptErr.status || 400).json({
+          success: false,
+          message: deptErr.message || "Selected department was not found",
+        });
       }
-      patch.department_id = resolvedDept;
+      patch.department_id = nextDepartmentIds[0] || null;
     }
 
     if (patch.year_of_study !== undefined) {
@@ -1602,6 +1789,7 @@ exports.updateUser = async (req, res) => {
       patch.boarding_status = null;
     } else {
       patch.department_id = null;
+      nextDepartmentIds = [];
       if (patch.admission_number !== undefined) {
         patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
       }
@@ -1663,10 +1851,45 @@ exports.updateUser = async (req, res) => {
       patch.is_public = false;
     }
 
+    if (DEPARTMENT_SCOPED_ROLES.includes(effectiveRole)) {
+      let deptIds = nextDepartmentIds;
+      if (deptIds === undefined) {
+        const existing = await UserDepartment.findAll({
+          where: { user_id: user.id },
+          attributes: ["department_id"],
+        });
+        deptIds = existing.map((row) => row.department_id);
+        if (!deptIds.length && user.department_id) deptIds = [user.department_id];
+      }
+      if (!deptIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one department is required for a head of department or lecturer",
+        });
+      }
+    }
+
+    if (req.user.role === "dean" && req.user.id !== user.id) {
+      const bodyKeys = Object.keys(req.body || {});
+      if (bodyKeys.some((key) => key !== "boarding_status")) {
+        return res.status(403).json({
+          success: false,
+          message: "Deans can update boarding status only",
+        });
+      }
+      const boarding = patch.boarding_status;
+      for (const key of Object.keys(patch)) delete patch[key];
+      if (boarding !== undefined) patch.boarding_status = boarding;
+      nextDepartmentIds = undefined;
+    }
+
     await user.update(patch);
+    if (nextDepartmentIds !== undefined) {
+      await setUserDepartments(user, nextDepartmentIds);
+    }
     const full = await User.findByPk(user.id, {
       attributes: { exclude: ["password_hash"] },
-      include: [programmeInclude, departmentInclude],
+      include: userDetailIncludes,
     });
     return res.json({ success: true, data: sanitizeUser(full) });
   } catch (error) {
@@ -1681,7 +1904,7 @@ exports.changePassword = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    if (req.user.id !== user.id && !STAFF_ROLES.includes(req.user.role)) {
+    if (req.user.id !== user.id && !WRITE_STUDENT_ROLES.includes(req.user.role)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
@@ -1730,6 +1953,16 @@ exports.deleteUser = async (req, res) => {
     if (user.role === ADMIN_ROLE && req.user.role !== ADMIN_ROLE) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
+    if (
+      req.user.role !== ADMIN_ROLE &&
+      user.role !== "student"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Only student accounts can be deleted by this office",
+      });
+    }
+    await UserDepartment.destroy({ where: { user_id: user.id } });
     await user.destroy();
     return res.json({ success: true, message: "User deleted" });
   } catch (error) {

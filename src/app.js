@@ -145,6 +145,12 @@ app.use("/api/library", require("./routes/libraryRoutes"));
 app.use("/api/attendance", require("./routes/attendanceRoutes"));
 app.use("/api/church", require("./routes/churchRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
+// Assignments (lecturer write; leadership / exams / students read)
+// GET /api/assignments/me
+// GET /api/assignments/summary
+// GET/POST /api/assignments
+// GET/PUT/DELETE /api/assignments/:id
+app.use("/api/assignments", require("./routes/assignmentRoutes"));
 
 app.post("/api/auth/forgot", async (req, res) => {
   try {

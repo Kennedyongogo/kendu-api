@@ -10,6 +10,31 @@ const {
 const { logFromRequest } = require("../middleware/auditLogger");
 const { buildLedger } = require("./accountingController");
 const { evaluateFeatureAccess } = require("../services/accessPolicyService");
+const { DEPARTMENT_SCOPED_ROLES, getActorDepartmentIds } = require("../middleware/auth");
+
+function limitsToOwnDepartment(user) {
+  return DEPARTMENT_SCOPED_ROLES.includes(user?.role);
+}
+
+function actorOwnsDepartment(user, departmentId) {
+  if (!departmentId) return false;
+  return getActorDepartmentIds(user).includes(String(departmentId));
+}
+
+async function hodCanRegister(actor, student) {
+  const departmentIds = getActorDepartmentIds(actor);
+  if (!departmentIds.length) {
+    return "Your account has no department assigned. Contact an admin.";
+  }
+  if (!student?.programme_id) return "This student has no programme";
+  const link = await ProgrammeDepartment.findOne({
+    where: {
+      programme_id: student.programme_id,
+      department_id: { [Op.in]: departmentIds },
+    },
+  });
+  return link ? null : "This student is outside your department";
+}
 
 const UNIT_STATUSES = ["draft", "pending", "approved", "rejected"];
 
@@ -131,8 +156,8 @@ function canEditUnit(user, unit) {
   if (!["draft", "rejected"].includes(unit.status)) return false;
   if (unit.created_by !== user.id) return false;
   if (user.role === "admin") return true;
-  if (user.role === "staff") {
-    return Boolean(user.department_id && unit.department_id === user.department_id);
+  if (limitsToOwnDepartment(user)) {
+    return actorOwnsDepartment(user, unit.department_id);
   }
   return false;
 }
@@ -182,15 +207,15 @@ exports.listUnits = async (req, res) => {
       andClauses.push({ is_active: toBool(req.query.is_active, true) });
     }
 
-    // Staff only see their department's units unless admin
-    if (req.user.role === "staff") {
-      if (!req.user.department_id) {
+    if (limitsToOwnDepartment(req.user)) {
+      const departmentIds = getActorDepartmentIds(req.user);
+      if (!departmentIds.length) {
         return res.status(400).json({
           success: false,
           message: "Your account has no department assigned. Contact an admin.",
         });
       }
-      andClauses.push({ department_id: req.user.department_id });
+      andClauses.push({ department_id: { [Op.in]: departmentIds } });
     }
 
     const q = String(req.query.search || req.query.q || "").trim();
@@ -245,11 +270,7 @@ exports.getUnitById = async (req, res) => {
     });
     if (!row) return res.status(404).json({ success: false, message: "Unit not found" });
 
-    if (
-      req.user.role === "staff" &&
-      req.user.department_id &&
-      row.department_id !== req.user.department_id
-    ) {
+    if (limitsToOwnDepartment(req.user) && !actorOwnsDepartment(req.user, row.department_id)) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
@@ -268,14 +289,21 @@ exports.createUnit = async (req, res) => {
     }
 
     let departmentId = req.body.department_id || null;
-    if (req.user.role === "staff") {
-      if (!req.user.department_id) {
+    if (limitsToOwnDepartment(req.user)) {
+      const departmentIds = getActorDepartmentIds(req.user);
+      if (!departmentIds.length) {
         return res.status(400).json({
           success: false,
           message: "Your account has no department assigned. Contact an admin.",
         });
       }
-      departmentId = req.user.department_id;
+      if (departmentId && !departmentIds.includes(String(departmentId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only create units in your departments",
+        });
+      }
+      departmentId = departmentId || departmentIds[0];
     }
     if (!departmentId) {
       return res.status(400).json({ success: false, message: "department_id is required" });
@@ -489,11 +517,11 @@ exports.deleteUnit = async (req, res) => {
     const row = await Unit.findByPk(req.params.id);
     if (!row) return res.status(404).json({ success: false, message: "Unit not found" });
 
-    if (req.user.role === "staff") {
+    if (limitsToOwnDepartment(req.user)) {
       if (!canEditUnit(req.user, row) || row.status === "approved" || row.status === "pending") {
         return res.status(403).json({
           success: false,
-          message: "Staff can only delete draft or rejected units they created in their department",
+          message: "You can only delete draft or rejected units you created in your department",
         });
       }
     }
@@ -531,14 +559,21 @@ exports.deleteUnit = async (req, res) => {
 exports.listDepartmentRoster = async (req, res) => {
   try {
     let departmentId = req.query.department_id || null;
-    if (req.user.role === "staff") {
-      if (!req.user.department_id) {
+    if (limitsToOwnDepartment(req.user)) {
+      const departmentIds = getActorDepartmentIds(req.user);
+      if (!departmentIds.length) {
         return res.status(400).json({
           success: false,
           message: "Your account has no department assigned. Contact an admin.",
         });
       }
-      departmentId = req.user.department_id;
+      if (departmentId && !departmentIds.includes(String(departmentId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view rosters for your departments",
+        });
+      }
+      departmentId = departmentId || departmentIds[0];
     }
 
     if (!departmentId) {
@@ -733,14 +768,21 @@ exports.listDepartmentRoster = async (req, res) => {
 exports.listAssignableProgrammes = async (req, res) => {
   try {
     let departmentId = req.query.department_id || null;
-    if (req.user.role === "staff") {
-      if (!req.user.department_id) {
+    if (limitsToOwnDepartment(req.user)) {
+      const departmentIds = getActorDepartmentIds(req.user);
+      if (!departmentIds.length) {
         return res.status(400).json({
           success: false,
           message: "Your account has no department assigned. Contact an admin.",
         });
       }
-      departmentId = req.user.department_id;
+      if (departmentId && !departmentIds.includes(String(departmentId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only list programmes for your departments",
+        });
+      }
+      departmentId = departmentId || departmentIds[0];
     }
 
     const include = departmentId
@@ -952,9 +994,17 @@ exports.listMyRegistrations = async (req, res) => {
 
 exports.registerForUnit = async (req, res) => {
   try {
-    const student = req.user;
-    if (student.role !== "student") {
-      return res.status(403).json({ success: false, message: "Students only" });
+    const studentId = req.body.student_id;
+    if (!studentId) {
+      return res.status(400).json({ success: false, message: "student_id is required" });
+    }
+    const student = await User.findByPk(studentId);
+    if (!student || student.role !== "student") {
+      return res.status(404).json({ success: false, message: "Student not found" });
+    }
+    if (req.user.role === "hod") {
+      const scopeError = await hodCanRegister(req.user, student);
+      if (scopeError) return res.status(403).json({ success: false, message: scopeError });
     }
     if (!student.programme_id || !student.year_of_study || !student.semester) {
       return res.status(400).json({
@@ -1035,16 +1085,18 @@ exports.registerForUnit = async (req, res) => {
 
 exports.dropUnitRegistration = async (req, res) => {
   try {
-    const student = req.user;
-    if (student.role !== "student") {
-      return res.status(403).json({ success: false, message: "Students only" });
-    }
-
     const row = await StudentUnitRegistration.findByPk(req.params.registrationId, {
-      include: [{ model: Unit, as: "unit" }],
+      include: [
+        { model: Unit, as: "unit" },
+        { model: User, as: "student" },
+      ],
     });
-    if (!row || row.student_id !== student.id) {
+    if (!row) {
       return res.status(404).json({ success: false, message: "Registration not found" });
+    }
+    if (req.user.role === "hod") {
+      const scopeError = await hodCanRegister(req.user, row.student);
+      if (scopeError) return res.status(403).json({ success: false, message: scopeError });
     }
     if (row.status !== "registered") {
       return res.status(400).json({ success: false, message: "Registration is already dropped" });

@@ -18,33 +18,39 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
   SCHOOL_ADMIN_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
+  READ_REGISTRATION_ROLES,
+  WRITE_REGISTRATION_ROLES,
+  READ_UNIT_ROLES,
+  WRITE_UNIT_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
-const portalStaff = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canReadUnits = [authenticateUser, authorizeRoles(READ_UNIT_ROLES)];
+const canWriteUnits = [authenticateUser, authorizeRoles(WRITE_UNIT_ROLES)];
+const canReadRegistrations = [authenticateUser, authorizeRoles(READ_REGISTRATION_ROLES)];
+const canWriteRegistrations = [authenticateUser, authorizeRoles(WRITE_REGISTRATION_ROLES)];
 const adminOnly = [authenticateUser, authorizeRoles(SCHOOL_ADMIN_ROLES)];
 const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
 
 // Static paths before /:id
-router.get("/assignable-programmes", ...portalStaff, listAssignableProgrammes);
-router.get("/department-roster", ...portalStaff, listDepartmentRoster);
+router.get("/assignable-programmes", ...canReadUnits, listAssignableProgrammes);
+router.get("/department-roster", ...canReadRegistrations, listDepartmentRoster);
 router.get("/student/available", ...studentsOnly, listAvailableUnitsForStudent);
 router.get("/student/registrations", ...studentsOnly, listMyRegistrations);
-router.post("/registrations/:registrationId/drop", ...studentsOnly, dropUnitRegistration);
+router.post("/registrations/:registrationId/drop", ...canWriteRegistrations, dropUnitRegistration);
 
-router.get("/", ...portalStaff, listUnits);
-router.post("/", ...portalStaff, createUnit);
-router.get("/:id", ...portalStaff, getUnitById);
-router.put("/:id", ...portalStaff, updateUnit);
-router.post("/:id/submit", ...portalStaff, submitUnit);
+router.get("/", ...canReadUnits, listUnits);
+router.post("/", ...canWriteUnits, createUnit);
+router.get("/:id", ...canReadUnits, getUnitById);
+router.put("/:id", ...canWriteUnits, updateUnit);
+router.post("/:id/submit", ...canWriteUnits, submitUnit);
 router.post("/:id/approve", ...adminOnly, approveUnit);
 router.post("/:id/reject", ...adminOnly, rejectUnit);
-router.post("/:id/register", ...studentsOnly, registerForUnit);
-router.delete("/:id", ...portalStaff, deleteUnit);
+router.post("/:id/register", ...canWriteRegistrations, registerForUnit);
+router.delete("/:id", ...canWriteUnits, deleteUnit);
 
 router.use(errorHandler);
 

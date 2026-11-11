@@ -12,7 +12,7 @@ const {
   sequelize,
 } = require("../models");
 const { logFromRequest } = require("../middleware/auditLogger");
-const { ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
+const { PORTAL_ROLES } = require("../middleware/auth");
 
 const CATEGORIES = ["certificate", "diploma", "higher_diploma"];
 const MODES = ["full_time", "part_time"];
@@ -504,7 +504,7 @@ exports.listProgrammes = async (req, res) => {
       success: true,
       data: rows.map((row) => {
         const data = serializeProgramme(row);
-        if (!req.user || !ADMIN_PORTAL_API_ROLES.includes(req.user.role)) {
+        if (!req.user || !PORTAL_ROLES.includes(req.user.role)) {
           delete data.modules;
         }
         return data;
@@ -531,8 +531,7 @@ exports.getProgrammeById = async (req, res) => {
     // Modules are for enrolled students / staff only — hide from public
     const role = req.user?.role;
     const canSeeModules =
-      role === "admin" ||
-      role === "staff" ||
+      PORTAL_ROLES.includes(role) ||
       (role === "student" && req.user?.programme_id === programme.id);
     if (!canSeeModules) {
       delete data.modules;

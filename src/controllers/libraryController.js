@@ -1,4 +1,6 @@
-const { Op, fn, col, literal } = require("sequelize");
+const { Op, fn, col, literal, where: sqlWhere } = require("sequelize");
+const ExcelJS = require("exceljs");
+const XLSX = require("xlsx");
 const {
   sequelize,
   LibraryBook,
@@ -10,7 +12,26 @@ const {
   User,
 } = require("../models");
 
-const BORROWER_ROLES = new Set(["student", "staff", "admin"]);
+const { ALL_USER_ROLES } = require("../middleware/auth");
+
+const BOOK_IMPORT_FIELDS = [
+  { key: "title", label: "Title", required: true },
+  { key: "author", label: "Author", required: false },
+  { key: "quantity", label: "Quantity", required: false },
+  { key: "programme", label: "Programme", required: false },
+  { key: "notes", label: "Notes", required: false },
+];
+const ELEARNING_IMPORT_FIELDS = [
+  { key: "title", label: "Title", required: true },
+  { key: "url", label: "URL", required: true },
+  { key: "resource_type", label: "Resource type", required: false },
+  { key: "programme", label: "Programme", required: false },
+  { key: "description", label: "Description", required: false },
+];
+const MAX_BOOK_IMPORT_ROWS = 500;
+const MAX_ELEARNING_IMPORT_ROWS = 500;
+
+const BORROWER_ROLES = new Set(ALL_USER_ROLES.filter((role) => role !== "catering"));
 const LOAN_STATUSES = new Set(["active", "returned", "overdue"]);
 const RESOURCE_TYPES = new Set(["link", "pdf", "video", "other"]);
 const SERVICE_CATEGORIES = new Set(["research", "access", "print", "space", "lending", "other"]);
@@ -368,9 +389,9 @@ exports.getStats = async (req, res) => {
             copies: Number(plain.copies) || 0,
           };
         }),
-        by_borrower_role: ["student", "staff", "admin"].map((role) => ({
-          role,
-          count: Number(byBorrowerRole.find((r) => r.role === role)?.count || 0),
+        by_borrower_role: byBorrowerRole.map((row) => ({
+          role: row.role,
+          count: Number(row.count) || 0,
         })),
         recent_loans: recentLoans.map(serializeLoan),
       },
@@ -708,7 +729,7 @@ exports.createLoan = async (req, res) => {
     });
     if (!borrower || !borrower.is_active) throw httpError(404, "Borrower not found or inactive.");
     if (!BORROWER_ROLES.has(borrower.role)) {
-      throw httpError(400, "Books can only be issued to students, staff, or admins.");
+      throw httpError(400, "Books can be issued to students and school offices.");
     }
 
     const onLoan = await countActiveLoansForBook(book_id, { transaction: t });
@@ -1043,7 +1064,7 @@ exports.deleteService = async (req, res) => {
   }
 };
 
-/** GET /api/library/borrowers?search=&role= — pick student/staff/admin */
+/** GET /api/library/borrowers?search=&role= — students and school offices */
 exports.searchBorrowers = async (req, res) => {
   try {
     const q = String(req.query.search || req.query.q || "").trim();
@@ -1066,6 +1087,704 @@ exports.searchBorrowers = async (req, res) => {
       limit: Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100)),
     });
     return res.json({ success: true, data: rows });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+function trimBookCell(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return String(v).trim();
+}
+
+function readBookExcelMatrix(buffer) {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) throw httpError(400, "Workbook has no sheets");
+  const ws = workbook.Sheets[sheetName];
+  const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+  if (!matrix.length) throw httpError(400, "Sheet is empty");
+  return { sheetName, matrix };
+}
+
+function normalizeBookHeader(cell) {
+  if (cell == null || String(cell).trim() === "") return null;
+  const key = String(cell).trim().toLowerCase().replace(/\s+/g, "_");
+  const aliases = {
+    title: "title",
+    book: "title",
+    book_title: "title",
+    book_name: "title",
+    name: "title",
+    author: "author",
+    writer: "author",
+    quantity: "quantity",
+    qty: "quantity",
+    copies: "quantity",
+    stock: "quantity",
+    programme: "programme",
+    programme_name: "programme",
+    program: "programme",
+    course: "programme",
+    notes: "notes",
+    note: "notes",
+    remarks: "notes",
+  };
+  return aliases[key] || key;
+}
+
+async function resolveBookProgrammeId(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const raw = String(value).trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+    const byId = await Programme.findByPk(raw);
+    return byId ? byId.id : null;
+  }
+  const byName = await Programme.findOne({
+    where: sqlWhere(fn("LOWER", col("name")), raw.toLowerCase()),
+  });
+  return byName ? byName.id : null;
+}
+
+/** GET /api/library/books/import-template */
+exports.downloadBooksImportTemplate = async (req, res) => {
+  try {
+    const programmes = await Programme.findAll({
+      where: { is_active: true },
+      attributes: ["id", "name"],
+      order: [["name", "ASC"]],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet("Books", {
+      views: [{ state: "frozen", ySplit: 1 }],
+    });
+
+    ws.columns = [
+      { header: "Title", key: "title", width: 36 },
+      { header: "Author", key: "author", width: 26 },
+      { header: "Quantity", key: "quantity", width: 12 },
+      { header: "Programme", key: "programme", width: 34 },
+      { header: "Notes", key: "notes", width: 32 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE8F0FA" },
+    };
+
+    ws.addRow({
+      title: "Fundamentals of Nursing",
+      author: "Potter & Perry",
+      quantity: 5,
+      programme: programmes[0]?.name || "",
+      notes: "Core textbook",
+    });
+    ws.addRow({
+      title: "Anatomy & Physiology",
+      author: "Marieb",
+      quantity: 3,
+      programme: programmes[0]?.name || "",
+      notes: "",
+    });
+
+    if (programmes.length) {
+      const lists = workbook.addWorksheet("Lists");
+      lists.getColumn(1).header = "Programmes";
+      lists.getColumn(1).width = 40;
+      programmes.forEach((p, i) => {
+        lists.getCell(i + 2, 1).value = p.name;
+      });
+      for (let row = 2; row <= 502; row++) {
+        ws.getCell(`D${row}`).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`Lists!$A$2:$A$${programmes.length + 1}`],
+          showErrorMessage: true,
+          errorTitle: "Programme",
+          error: "Pick a programme from the list, or leave blank and set a default in the importer.",
+        };
+      }
+    }
+
+    const guide = workbook.addWorksheet("Instructions");
+    guide.getColumn(1).width = 92;
+    [
+      "How to import library books",
+      "1. Fill the Books sheet. Title is required on every row.",
+      "2. Quantity defaults to 1 when blank.",
+      "3. Programme can be set per row (dropdown) or as a default during import.",
+      "4. Upload this file in Library → Books → Import Excel.",
+      "5. Match columns if your headers differ, then confirm import.",
+    ].forEach((line, i) => {
+      guide.getCell(i + 1, 1).value = line;
+      if (i === 0) guide.getCell(i + 1, 1).font = { bold: true, size: 13 };
+    });
+
+    workbook.views = [{ activeTab: 0 }];
+    const buf = await workbook.xlsx.writeBuffer();
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="books-import-template.xlsx"'
+    );
+    return res.send(Buffer.from(buf));
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/** POST /api/library/books/import-preview */
+exports.previewBooksImport = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readBookExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const rawHeaders = matrix[0].map((h, index) => ({
+      index,
+      header: trimBookCell(h) || `Column ${index + 1}`,
+      suggested: normalizeBookHeader(h),
+    }));
+
+    const dataRowCount = matrix.slice(1).filter((row) =>
+      row.some((cell) => trimBookCell(cell) !== "")
+    ).length;
+
+    const sample = [];
+    for (let i = 1; i < matrix.length && sample.length < 5; i++) {
+      const row = matrix[i];
+      if (!row.some((cell) => trimBookCell(cell) !== "")) continue;
+      const obj = {};
+      rawHeaders.forEach((col) => {
+        obj[col.header] = trimBookCell(row[col.index]);
+      });
+      sample.push(obj);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        columns: rawHeaders,
+        sample,
+        row_count: dataRowCount,
+        system_fields: BOOK_IMPORT_FIELDS,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * POST /api/library/books/import-mapped
+ * mapping: { title: "Title", author: "Author", ... }
+ * defaults: { programme_id, quantity }
+ */
+exports.importBooksMapped = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let mapping = {};
+    let defaults = {};
+    try {
+      mapping =
+        typeof req.body.mapping === "string"
+          ? JSON.parse(req.body.mapping || "{}")
+          : req.body.mapping || {};
+      defaults =
+        typeof req.body.defaults === "string"
+          ? JSON.parse(req.body.defaults || "{}")
+          : req.body.defaults || {};
+    } catch {
+      return res.status(400).json({ success: false, message: "Invalid mapping or defaults JSON." });
+    }
+
+    if (!mapping.title) {
+      return res.status(400).json({
+        success: false,
+        message: "Map the Title column before importing.",
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readBookExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const headerRow = matrix[0].map((h, index) => ({
+      index,
+      header: trimBookCell(h) || `Column ${index + 1}`,
+    }));
+    const headerIndex = new Map(headerRow.map((h) => [h.header, h.index]));
+    const defaultProgrammeId = await resolveBookProgrammeId(defaults.programme_id);
+    const defaultQuantityRaw = defaults.quantity;
+
+    const dataRows = [];
+    for (let i = 1; i < matrix.length; i++) {
+      const row = matrix[i];
+      const excelRow = i + 1;
+      const get = (systemKey) => {
+        const header = mapping[systemKey];
+        if (!header) return "";
+        const idx = headerIndex.get(header);
+        if (idx === undefined) return "";
+        return trimBookCell(row[idx]);
+      };
+
+      const title = get("title");
+      const author = get("author");
+      const quantity = get("quantity");
+      const programmeValue = get("programme");
+      const notes = get("notes");
+
+      if (!title && !author && !quantity && !programmeValue && !notes) continue;
+
+      dataRows.push({ excelRow, title, author, quantity, programmeValue, notes });
+    }
+
+    if (!dataRows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No data rows found below the header row",
+      });
+    }
+    if (dataRows.length > MAX_BOOK_IMPORT_ROWS) {
+      return res.status(400).json({
+        success: false,
+        message: `Too many rows (${dataRows.length}). Maximum per upload is ${MAX_BOOK_IMPORT_ROWS}.`,
+      });
+    }
+
+    const errors = [];
+    const created = [];
+
+    for (const row of dataRows) {
+      const { excelRow, title, author, quantity, programmeValue, notes } = row;
+      if (!title) {
+        errors.push({ row: excelRow, message: "Title is required" });
+        continue;
+      }
+
+      const programme_id =
+        (await resolveBookProgrammeId(programmeValue)) || defaultProgrammeId;
+      if (!programme_id) {
+        errors.push({
+          row: excelRow,
+          message: "Programme is required (set a default or map a Programme column)",
+        });
+        continue;
+      }
+
+      let qty = 1;
+      const qtySource =
+        quantity !== ""
+          ? quantity
+          : defaultQuantityRaw !== undefined && defaultQuantityRaw !== null && defaultQuantityRaw !== ""
+            ? defaultQuantityRaw
+            : "1";
+      const parsedQty = Number(qtySource);
+      if (!Number.isInteger(parsedQty) || parsedQty < 1) {
+        errors.push({ row: excelRow, message: "Quantity must be an integer >= 1" });
+        continue;
+      }
+      qty = parsedQty;
+
+      try {
+        const book = await LibraryBook.create({
+          title,
+          author: author || null,
+          quantity: qty,
+          programme_id,
+          notes: notes || null,
+          is_active: true,
+        });
+        created.push({
+          row: excelRow,
+          id: book.id,
+          title: book.title,
+          quantity: book.quantity,
+        });
+      } catch (err) {
+        errors.push({ row: excelRow, message: err.message || "Could not create book" });
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        createdCount: created.length,
+        errorCount: errors.length,
+        created,
+        errors,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+function normalizeElearningHeader(cell) {
+  if (cell == null || String(cell).trim() === "") return null;
+  const key = String(cell).trim().toLowerCase().replace(/\s+/g, "_");
+  const aliases = {
+    title: "title",
+    name: "title",
+    resource: "title",
+    resource_title: "title",
+    url: "url",
+    link: "url",
+    website: "url",
+    resource_url: "url",
+    resource_type: "resource_type",
+    type: "resource_type",
+    format: "resource_type",
+    programme: "programme",
+    programme_name: "programme",
+    program: "programme",
+    course: "programme",
+    description: "description",
+    details: "description",
+    notes: "description",
+  };
+  return aliases[key] || key;
+}
+
+function normalizeElearningResourceType(value, fallback = "link") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return fallback;
+  if (RESOURCE_TYPES.has(raw)) return raw;
+  if (["youtube", "mp4", "clip"].includes(raw)) return "video";
+  if (["document", "doc", "file"].includes(raw)) return "pdf";
+  return fallback;
+}
+
+/** GET /api/library/elearning/import-template */
+exports.downloadElearningImportTemplate = async (req, res) => {
+  try {
+    const programmes = await Programme.findAll({
+      where: { is_active: true },
+      attributes: ["id", "name"],
+      order: [["name", "ASC"]],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet("E-learning", {
+      views: [{ state: "frozen", ySplit: 1 }],
+    });
+
+    ws.columns = [
+      { header: "Title", key: "title", width: 36 },
+      { header: "URL", key: "url", width: 48 },
+      { header: "Resource type", key: "resource_type", width: 16 },
+      { header: "Programme", key: "programme", width: 34 },
+      { header: "Description", key: "description", width: 36 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE8F0FA" },
+    };
+
+    const sampleProgramme = programmes[0]?.name || "";
+    ws.addRow({
+      title: "WHO Reproductive Health Library",
+      url: "https://www.who.int/teams/sexual-and-reproductive-health-and-research",
+      resource_type: "link",
+      programme: sampleProgramme,
+      description: "Evidence summaries for clinical practice",
+    });
+    ws.addRow({
+      title: "OpenWHO Clinical Management Course",
+      url: "https://openwho.org/",
+      resource_type: "video",
+      programme: sampleProgramme,
+      description: "Self-paced clinical modules",
+    });
+
+    const lists = workbook.addWorksheet("Lists");
+    lists.getCell(1, 1).value = "Resource types";
+    lists.getCell(1, 1).font = { bold: true };
+    ["link", "pdf", "video", "other"].forEach((t, i) => {
+      lists.getCell(i + 2, 1).value = t;
+    });
+    lists.getColumn(1).width = 18;
+
+    lists.getCell(1, 2).value = "Programmes";
+    lists.getCell(1, 2).font = { bold: true };
+    lists.getColumn(2).width = 40;
+    programmes.forEach((p, i) => {
+      lists.getCell(i + 2, 2).value = p.name;
+    });
+
+    for (let row = 2; row <= 502; row++) {
+      ws.getCell(`C${row}`).dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: ["Lists!$A$2:$A$5"],
+        showErrorMessage: true,
+        errorTitle: "Resource type",
+        error: "Use link, pdf, video, or other.",
+      };
+      if (programmes.length) {
+        ws.getCell(`D${row}`).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`Lists!$B$2:$B$${programmes.length + 1}`],
+          showErrorMessage: true,
+          errorTitle: "Programme",
+          error: "Pick a programme from the list, or leave blank and set a default in the importer.",
+        };
+      }
+    }
+
+    const guide = workbook.addWorksheet("Instructions");
+    guide.getColumn(1).width = 96;
+    [
+      "How to import e-learning resources",
+      "1. Fill the E-learning sheet. Title and URL are required on every row.",
+      "2. Resource type may be link, pdf, video, or other (defaults to link).",
+      "3. Programme can be set per row or as a default during import.",
+      "4. Upload this file in Library → E-learning → Import Excel.",
+      "5. Match columns if your headers differ, then confirm import.",
+    ].forEach((line, i) => {
+      guide.getCell(i + 1, 1).value = line;
+      if (i === 0) guide.getCell(i + 1, 1).font = { bold: true, size: 13 };
+    });
+
+    workbook.views = [{ activeTab: 0 }];
+    const buf = await workbook.xlsx.writeBuffer();
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="elearning-import-template.xlsx"'
+    );
+    return res.send(Buffer.from(buf));
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/** POST /api/library/elearning/import-preview */
+exports.previewElearningImport = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readBookExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const rawHeaders = matrix[0].map((h, index) => ({
+      index,
+      header: trimBookCell(h) || `Column ${index + 1}`,
+      suggested: normalizeElearningHeader(h),
+    }));
+
+    const dataRowCount = matrix.slice(1).filter((row) =>
+      row.some((cell) => trimBookCell(cell) !== "")
+    ).length;
+
+    const sample = [];
+    for (let i = 1; i < matrix.length && sample.length < 5; i++) {
+      const row = matrix[i];
+      if (!row.some((cell) => trimBookCell(cell) !== "")) continue;
+      const obj = {};
+      rawHeaders.forEach((col) => {
+        obj[col.header] = trimBookCell(row[col.index]);
+      });
+      sample.push(obj);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        columns: rawHeaders,
+        sample,
+        row_count: dataRowCount,
+        system_fields: ELEARNING_IMPORT_FIELDS,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * POST /api/library/elearning/import-mapped
+ * mapping: { title, url, resource_type, programme, description }
+ * defaults: { programme_id, resource_type }
+ */
+exports.importElearningMapped = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Send multipart field name "file".',
+      });
+    }
+
+    let mapping = {};
+    let defaults = {};
+    try {
+      mapping =
+        typeof req.body.mapping === "string"
+          ? JSON.parse(req.body.mapping || "{}")
+          : req.body.mapping || {};
+      defaults =
+        typeof req.body.defaults === "string"
+          ? JSON.parse(req.body.defaults || "{}")
+          : req.body.defaults || {};
+    } catch {
+      return res.status(400).json({ success: false, message: "Invalid mapping or defaults JSON." });
+    }
+
+    if (!mapping.title || !mapping.url) {
+      return res.status(400).json({
+        success: false,
+        message: "Map the Title and URL columns before importing.",
+      });
+    }
+
+    let matrix;
+    try {
+      ({ matrix } = readBookExcelMatrix(req.file.buffer));
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        success: false,
+        message: err.message || "Could not read Excel file",
+      });
+    }
+
+    const headerRow = matrix[0].map((h, index) => ({
+      index,
+      header: trimBookCell(h) || `Column ${index + 1}`,
+    }));
+    const headerIndex = new Map(headerRow.map((h) => [h.header, h.index]));
+    const defaultProgrammeId = await resolveBookProgrammeId(defaults.programme_id);
+    const defaultResourceType = normalizeElearningResourceType(defaults.resource_type, "link");
+
+    const dataRows = [];
+    for (let i = 1; i < matrix.length; i++) {
+      const row = matrix[i];
+      const excelRow = i + 1;
+      const get = (systemKey) => {
+        const header = mapping[systemKey];
+        if (!header) return "";
+        const idx = headerIndex.get(header);
+        if (idx === undefined) return "";
+        return trimBookCell(row[idx]);
+      };
+
+      const title = get("title");
+      const url = get("url");
+      const resource_type = get("resource_type");
+      const programmeValue = get("programme");
+      const description = get("description");
+
+      if (!title && !url && !resource_type && !programmeValue && !description) continue;
+
+      dataRows.push({ excelRow, title, url, resource_type, programmeValue, description });
+    }
+
+    if (!dataRows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No data rows found below the header row",
+      });
+    }
+    if (dataRows.length > MAX_ELEARNING_IMPORT_ROWS) {
+      return res.status(400).json({
+        success: false,
+        message: `Too many rows (${dataRows.length}). Maximum per upload is ${MAX_ELEARNING_IMPORT_ROWS}.`,
+      });
+    }
+
+    const errors = [];
+    const created = [];
+
+    for (const row of dataRows) {
+      const { excelRow, title, url, resource_type, programmeValue, description } = row;
+      if (!title || !url) {
+        errors.push({ row: excelRow, message: "Title and URL are required" });
+        continue;
+      }
+
+      const programme_id =
+        (await resolveBookProgrammeId(programmeValue)) || defaultProgrammeId || null;
+      const type = normalizeElearningResourceType(resource_type, defaultResourceType);
+
+      try {
+        const item = await LibraryElearning.create({
+          title,
+          url,
+          description: description || null,
+          resource_type: type,
+          programme_id,
+          is_active: true,
+        });
+        created.push({
+          row: excelRow,
+          id: item.id,
+          title: item.title,
+          resource_type: item.resource_type,
+        });
+      } catch (err) {
+        errors.push({ row: excelRow, message: err.message || "Could not create resource" });
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        createdCount: created.length,
+        errorCount: errors.length,
+        created,
+        errors,
+      },
+    });
   } catch (error) {
     return res.status(error.status || 500).json({ success: false, message: error.message });
   }

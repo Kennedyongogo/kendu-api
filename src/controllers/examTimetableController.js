@@ -41,14 +41,20 @@ function parseDateOnly(value) {
   return s;
 }
 
+const { APPROVE_EXAM_ROLES, WRITE_EXAM_ROLES } = require("../middleware/auth");
+
 function isAdmin(user) {
   return user?.role === "admin";
+}
+
+function canApproveExam(user) {
+  return APPROVE_EXAM_ROLES.includes(user?.role);
 }
 
 function canEditPeriod(user, period) {
   if (!user || !period) return false;
   if (!EDITABLE_STATUSES.includes(period.status)) return false;
-  return isAdmin(user) || ["admin", "staff"].includes(user.role);
+  return WRITE_EXAM_ROLES.includes(user.role);
 }
 
 function serializePeriod(row, { includeSlots = false } = {}) {
@@ -726,8 +732,8 @@ exports.submitPeriod = async (req, res) => {
 
 exports.approvePeriod = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
-      return res.status(403).json({ success: false, message: "Only administrators can approve" });
+    if (!canApproveExam(req.user)) {
+      return res.status(403).json({ success: false, message: "Only the examinations office can approve" });
     }
     const row = await loadPeriod(req.params.id, { withSlots: true });
     if (!row) {
@@ -766,8 +772,8 @@ exports.approvePeriod = async (req, res) => {
 
 exports.rejectPeriod = async (req, res) => {
   try {
-    if (!isAdmin(req.user)) {
-      return res.status(403).json({ success: false, message: "Only administrators can reject" });
+    if (!canApproveExam(req.user)) {
+      return res.status(403).json({ success: false, message: "Only the examinations office can reject" });
     }
     const row = await ExamPeriod.findByPk(req.params.id);
     if (!row) {

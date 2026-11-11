@@ -10,7 +10,12 @@ const {
   updateApplicationStatus,
   deleteApplication,
 } = require("../controllers/admissionController");
-const { authenticateUser, authorizeRoles, ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
+const {
+  authenticateUser,
+  authorizeRoles,
+  READ_ADMISSION_ROLES,
+  WRITE_ADMISSION_ROLES,
+} = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
@@ -49,17 +54,17 @@ const documentUpload = upload.fields([
   { name: "id_document", maxCount: 1 },
 ]);
 
-const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canRead = [authenticateUser, authorizeRoles(READ_ADMISSION_ROLES)];
+const canWrite = [authenticateUser, authorizeRoles(WRITE_ADMISSION_ROLES)];
 
 // Public: submit admission application
 router.post("/", documentUpload, createApplication);
 
-// Admin: manage applications
-router.get("/", ...adminOnly, listApplications);
-router.get("/:id", ...adminOnly, getApplicationById);
-router.put("/:id/status", ...adminOnly, updateApplicationStatus);
-router.put("/:id", ...adminOnly, documentUpload, updateApplication);
-router.delete("/:id", ...adminOnly, deleteApplication);
+router.get("/", ...canRead, listApplications);
+router.get("/:id", ...canRead, getApplicationById);
+router.put("/:id/status", ...canWrite, updateApplicationStatus);
+router.put("/:id", ...canWrite, documentUpload, updateApplication);
+router.delete("/:id", ...canWrite, deleteApplication);
 
 router.use(errorHandler);
 

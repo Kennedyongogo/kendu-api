@@ -14,7 +14,8 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  BROCHURE_READ_ROLES,
+  BROCHURE_WRITE_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
@@ -49,16 +50,17 @@ const upload = multer({
   },
 });
 
-const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canView = [authenticateUser, authorizeRoles(BROCHURE_READ_ROLES)];
+const canManage = [authenticateUser, authorizeRoles(BROCHURE_WRITE_ROLES)];
 
 router.get("/public", listPublic);
 router.get("/:id/file", serveFile);
 
-router.get("/", ...adminOnly, listBrochures);
-router.get("/:id", ...adminOnly, getBrochure);
-router.post("/", ...adminOnly, upload.single("file"), createBrochure);
-router.put("/:id", ...adminOnly, upload.single("file"), updateBrochure);
-router.delete("/:id", ...adminOnly, deleteBrochure);
+router.get("/", ...canView, listBrochures);
+router.get("/:id", ...canView, getBrochure);
+router.post("/", ...canManage, upload.single("file"), createBrochure);
+router.put("/:id", ...canManage, upload.single("file"), updateBrochure);
+router.delete("/:id", ...canManage, deleteBrochure);
 
 router.use(errorHandler);
 

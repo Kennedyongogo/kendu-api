@@ -104,7 +104,7 @@ async function findUser(identifier) {
   const q = `%${identifier}%`;
   return User.findOne({
     where: {
-      role: { [Op.in]: ["staff", "admin"] },
+      role: { [Op.in]: ["lecturer", "hod", "admin"] },
       [Op.or]: [
         { full_name: { [Op.iLike]: q } },
         { email: { [Op.iLike]: q } },

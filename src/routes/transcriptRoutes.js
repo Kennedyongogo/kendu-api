@@ -16,28 +16,30 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  READ_EXAM_ROLES,
+  WRITE_EXAM_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
-const canManage = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canRead = [authenticateUser, authorizeRoles(READ_EXAM_ROLES)];
+const canWrite = [authenticateUser, authorizeRoles(WRITE_EXAM_ROLES)];
 const canStudent = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
 
 router.get("/me", ...canStudent, listMine);
 router.get("/me/:id/pdf", ...canStudent, getMinePdf);
 router.get("/me/:id", ...canStudent, getMine);
 
-router.get("/students/:studentId/context", ...canManage, getStudentContext);
-router.get("/students/:studentId/registered-units", ...canManage, listRegisteredUnits);
-router.get("/students/:studentId", ...canManage, listForStudent);
-router.post("/preview", ...canManage, previewPdf);
-router.get("/:id/pdf", ...canManage, getPdf);
-router.get("/:id", ...canManage, getOne);
-router.post("/", ...canManage, create);
-router.put("/:id", ...canManage, update);
-router.delete("/:id", ...canManage, remove);
+router.get("/students/:studentId/context", ...canRead, getStudentContext);
+router.get("/students/:studentId/registered-units", ...canRead, listRegisteredUnits);
+router.get("/students/:studentId", ...canRead, listForStudent);
+router.post("/preview", ...canWrite, previewPdf);
+router.get("/:id/pdf", ...canRead, getPdf);
+router.get("/:id", ...canRead, getOne);
+router.post("/", ...canWrite, create);
+router.put("/:id", ...canWrite, update);
+router.delete("/:id", ...canWrite, remove);
 
 router.use(errorHandler);
 

@@ -9,12 +9,12 @@ const {
   deleteSession,
   downloadSessionPdf,
 } = require("../controllers/attendanceController");
-const { authenticateUser, authorizeRoles, STAFF_ROLES } = require("../middleware/auth");
+const { authenticateUser, authorizeRoles, ATTENDANCE_ROLES } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
 
-const teaching = [authenticateUser, authorizeRoles(STAFF_ROLES)];
+const teaching = [authenticateUser, authorizeRoles(ATTENDANCE_ROLES)];
 
 router.get("/classes", ...teaching, listClasses);
 router.get("/roster", ...teaching, getRoster);

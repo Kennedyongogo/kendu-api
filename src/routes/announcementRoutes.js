@@ -15,8 +15,8 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
-  SCHOOL_ADMIN_ROLES,
+  ANNOUNCEMENT_READ_ROLES,
+  ANNOUNCEMENT_WRITE_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
@@ -44,9 +44,9 @@ const upload = multer({
   },
 });
 
-// Admin + staff may read; only admin may create / update / delete
-const canView = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
-const canManage = [authenticateUser, authorizeRoles(SCHOOL_ADMIN_ROLES)];
+// All portal roles may read; admin + secretary may create / update / delete
+const canView = [authenticateUser, authorizeRoles(ANNOUNCEMENT_READ_ROLES)];
+const canManage = [authenticateUser, authorizeRoles(ANNOUNCEMENT_WRITE_ROLES)];
 
 // Public site (before login)
 router.get("/public", listPublic);

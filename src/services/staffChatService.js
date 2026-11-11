@@ -7,7 +7,7 @@ const {
   User,
 } = require("../models");
 
-const STAFF_ROLES = ["admin", "staff"];
+const { STAFF_CHAT_ROLES: STAFF_ROLES } = require("../middleware/auth");
 
 function attachmentUrl(filename) {
   if (!filename) return null;

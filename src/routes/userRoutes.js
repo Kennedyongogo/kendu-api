@@ -23,7 +23,10 @@ const {
 const { authenticateUser, authorizeRoles } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
-const { ADMIN_PORTAL_API_ROLES, SCHOOL_ADMIN_ROLES } = require("../middleware/auth");
+const {
+  READ_STUDENT_ROLES,
+  WRITE_STUDENT_ROLES,
+} = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -69,42 +72,42 @@ router.get("/me", authenticateUser, me);
 router.post(
   "/",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_STUDENT_ROLES),
   profileUpload.single("profile_image"),
   createUser
 );
-router.get("/", authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES), listUsers);
+router.get("/", authenticateUser, authorizeRoles(READ_STUDENT_ROLES), listUsers);
 router.get(
   "/students/dashboard",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(READ_STUDENT_ROLES),
   studentDashboardStats
 );
 
 router.get(
   "/import-template",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_STUDENT_ROLES),
   downloadImportTemplate
 );
 router.post(
   "/import-excel",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_STUDENT_ROLES),
   excelUpload.single("file"),
   importUsersExcel
 );
 router.post(
   "/import-preview",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_STUDENT_ROLES),
   excelUpload.single("file"),
   previewImportExcel
 );
 router.post(
   "/import-mapped",
   authenticateUser,
-  authorizeRoles(ADMIN_PORTAL_API_ROLES),
+  authorizeRoles(WRITE_STUDENT_ROLES),
   excelUpload.single("file"),
   importUsersMapped
 );
@@ -117,8 +120,8 @@ router.put(
   updateUser
 );
 router.put("/:id/password", authenticateUser, changePassword);
-router.put("/:id/toggle-status", authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES), toggleActive);
-router.delete("/:id", authenticateUser, authorizeRoles(SCHOOL_ADMIN_ROLES), deleteUser);
+router.put("/:id/toggle-status", authenticateUser, authorizeRoles(WRITE_STUDENT_ROLES), toggleActive);
+router.delete("/:id", authenticateUser, authorizeRoles(WRITE_STUDENT_ROLES), deleteUser);
 
 router.use(errorHandler);
 

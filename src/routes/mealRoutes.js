@@ -7,7 +7,7 @@ const {
   CATERING_APP_ROLES,
   MOBILE_APP_ROLES,
   ADMIN_PORTAL_API_ROLES,
-  SCHOOL_ADMIN_ROLES,
+  MEAL_ADMIN_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
@@ -21,7 +21,7 @@ const markers = [
   authenticateUser,
   authorizeRoles([...new Set([...CATERING_APP_ROLES, ...ADMIN_PORTAL_API_ROLES])]),
 ];
-const adminOnly = [authenticateUser, authorizeRoles(SCHOOL_ADMIN_ROLES)];
+const adminOnly = [authenticateUser, authorizeRoles(MEAL_ADMIN_ROLES)];
 
 // Student portal
 router.get("/card", ...studentsOnly, meal.getMyMealCard);

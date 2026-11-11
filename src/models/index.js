@@ -48,6 +48,8 @@ const AttendanceRecord = require("./attendanceRecord")(sequelize);
 const ChurchService = require("./churchService")(sequelize);
 const ChurchBooking = require("./churchBooking")(sequelize);
 const Notification = require("./notification")(sequelize);
+const Assignment = require("./assignment")(sequelize);
+const UserDepartment = require("./userDepartment")(sequelize);
 
 const models = {
   User,
@@ -55,6 +57,7 @@ const models = {
   Department,
   Programme,
   ProgrammeDepartment,
+  UserDepartment,
   ProgrammeHourDistribution,
   ProgrammeModule,
   ProgrammeFee,
@@ -97,6 +100,7 @@ const models = {
   ChurchService,
   ChurchBooking,
   Notification,
+  Assignment,
 };
 
 const isConnectionReset = (error) => {
@@ -187,21 +191,72 @@ const repairUsersDemographicColumns = async () => {
   }
 };
 
-/** ALTER TYPE ... ADD VALUE must run outside a transaction, so do it before syncing users. */
+/** Keep users.role aligned with the User model. Postgres cannot drop an enum label in place. */
+const USER_ROLE_VALUES = [
+  "admin",
+  "student",
+  "catering",
+  "principal",
+  "deputy_principal",
+  "hod",
+  "academic_registrar",
+  "examinations",
+  "library",
+  "lecturer",
+  "secretary",
+  "dean",
+  "finance",
+];
+
 const ensureUserRoleValues = async () => {
-  try {
-    await sequelize.query(`
-      DO $roles$
-      BEGIN
-        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_users_role') THEN
-          ALTER TYPE "public"."enum_users_role" ADD VALUE IF NOT EXISTS 'catering';
-        END IF;
-      END
-      $roles$;
-    `);
-  } catch (error) {
-    console.warn("⚠️ Could not add catering to users.role enum:", error.message);
+  const [types] = await sequelize.query(
+    `SELECT 1 FROM pg_type WHERE typname = 'enum_users_role' LIMIT 1`
+  );
+  if (!types.length) return;
+
+  const [labels] = await sequelize.query(`
+    SELECT e.enumlabel AS label
+    FROM pg_type t
+    JOIN pg_enum e ON t.oid = e.enumtypid
+    WHERE t.typname = 'enum_users_role'
+    ORDER BY e.enumsortorder
+  `);
+  const current = labels.map((row) => row.label);
+  const matches =
+    current.length === USER_ROLE_VALUES.length &&
+    current.every((label, index) => label === USER_ROLE_VALUES[index]);
+  if (matches) return;
+
+  // Fast path: only new labels appended at the end (e.g. adding finance).
+  const isAppendOnly =
+    current.length < USER_ROLE_VALUES.length &&
+    current.every((label, index) => label === USER_ROLE_VALUES[index]);
+  if (isAppendOnly) {
+    for (const value of USER_ROLE_VALUES.slice(current.length)) {
+      await sequelize.query(
+        `ALTER TYPE "public"."enum_users_role" ADD VALUE IF NOT EXISTS '${value}'`
+      );
+    }
+    return;
   }
+
+  const [staffRows] = await sequelize.query(
+    `SELECT COUNT(*)::int AS count FROM users WHERE role::text = 'staff'`
+  );
+  if (Number(staffRows[0]?.count) > 0) {
+    throw new Error("Reassign users with role staff before that role can be removed.");
+  }
+
+  const enumList = USER_ROLE_VALUES.map((value) => `'${value}'`).join(", ");
+  await sequelize.query(`ALTER TABLE users ALTER COLUMN role DROP DEFAULT`).catch(() => {});
+  await sequelize.query(`ALTER TABLE users ALTER COLUMN role TYPE varchar(50) USING role::text`);
+  await sequelize.query(`DROP TYPE "public"."enum_users_role"`);
+  await sequelize.query(`CREATE TYPE "public"."enum_users_role" AS ENUM (${enumList})`);
+  await sequelize.query(`
+    ALTER TABLE users
+    ALTER COLUMN role TYPE "public"."enum_users_role"
+    USING role::"public"."enum_users_role"
+  `);
 };
 
 // Initialize models in correct order (parent tables first)
@@ -214,6 +269,7 @@ const initializeModels = async () => {
     await repairUsersDemographicColumns();
     await ensureUserRoleValues();
     await safeSync(User);
+    await safeSync(UserDepartment);
     // alter: true so new programme columns are applied to existing tables
     await safeSync(Programme);
     await safeSync(ProgrammeDepartment);
@@ -234,6 +290,24 @@ const initializeModels = async () => {
       // Column may already be gone — safe to ignore
       if (!/department_id|does not exist|column/i.test(migrateError.message || "")) {
         console.warn("⚠️ Programme–department migration skipped:", migrateError.message);
+      }
+    }
+
+    // Migrate users.department_id → user_departments for multi-department HOD/lecturer
+    try {
+      await sequelize.query(`
+        INSERT INTO user_departments (id, user_id, department_id, created_at, updated_at)
+        SELECT gen_random_uuid(), u.id, u.department_id, NOW(), NOW()
+        FROM users u
+        WHERE u.department_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM user_departments ud
+            WHERE ud.user_id = u.id AND ud.department_id = u.department_id
+          )
+      `);
+    } catch (migrateError) {
+      if (!/user_departments|does not exist|column/i.test(migrateError.message || "")) {
+        console.warn("⚠️ User–department migration skipped:", migrateError.message);
       }
     }
 
@@ -283,6 +357,7 @@ const initializeModels = async () => {
     await safeSync(ChurchService);
     await safeSync(ChurchBooking);
     await safeSync(Notification);
+    await safeSync(Assignment);
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -321,12 +396,34 @@ const setupAssociations = () => {
       as: "department",
     });
 
+    // Primary department (legacy / default) kept for backward-compatible scoping.
+    models.User.belongsTo(models.Department, {
+      foreignKey: "department_id",
+      as: "department",
+    });
     models.Department.hasMany(models.User, {
       foreignKey: "department_id",
-      as: "staff",
+      as: "primary_staff",
       onDelete: "SET NULL",
     });
-    models.User.belongsTo(models.Department, {
+    // HOD / lecturer (and other staff) may belong to many departments.
+    models.User.belongsToMany(models.Department, {
+      through: models.UserDepartment,
+      foreignKey: "user_id",
+      otherKey: "department_id",
+      as: "departments",
+    });
+    models.Department.belongsToMany(models.User, {
+      through: models.UserDepartment,
+      foreignKey: "department_id",
+      otherKey: "user_id",
+      as: "staff",
+    });
+    models.UserDepartment.belongsTo(models.User, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.UserDepartment.belongsTo(models.Department, {
       foreignKey: "department_id",
       as: "department",
     });
@@ -766,9 +863,52 @@ const setupAssociations = () => {
     models.ChurchBooking.belongsTo(models.User, { foreignKey: "user_id", as: "user" });
     models.ChurchBooking.belongsTo(models.User, { foreignKey: "checked_by", as: "checker" });
     models.Notification.belongsTo(models.User, { foreignKey: "user_id", as: "user" });
+
+    models.Assignment.belongsTo(models.Department, {
+      foreignKey: "department_id",
+      as: "department",
+    });
+    models.Department.hasMany(models.Assignment, {
+      foreignKey: "department_id",
+      as: "assignments",
+    });
+    models.Assignment.belongsTo(models.Programme, {
+      foreignKey: "programme_id",
+      as: "programme",
+    });
+    models.Programme.hasMany(models.Assignment, {
+      foreignKey: "programme_id",
+      as: "assignments",
+    });
+    models.Assignment.belongsTo(models.Unit, {
+      foreignKey: "unit_id",
+      as: "unit",
+    });
+    models.Unit.hasMany(models.Assignment, {
+      foreignKey: "unit_id",
+      as: "assignments",
+    });
+    models.Assignment.belongsTo(models.User, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.Assignment.belongsTo(models.User, {
+      foreignKey: "updated_by",
+      as: "updater",
+    });
+    models.User.hasMany(models.Assignment, {
+      foreignKey: "created_by",
+      as: "assignments_created",
+    });
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }
 };
 
-module.exports = { ...models, initializeModels, setupAssociations, sequelize };
+module.exports = {
+  ...models,
+  initializeModels,
+  setupAssociations,
+  ensureUserRoleValues,
+  sequelize,
+};

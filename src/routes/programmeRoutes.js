@@ -31,8 +31,9 @@ const {
   authenticateUser,
   authorizeRoles,
   optionalAuth,
-  ADMIN_PORTAL_API_ROLES,
   PUBLIC_PORTAL_ALLOWED_ROLES,
+  READ_PROGRAMME_ROLES,
+  WRITE_PROGRAMME_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
@@ -61,47 +62,47 @@ const upload = multer({
   },
 });
 
-const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canWrite = [authenticateUser, authorizeRoles(WRITE_PROGRAMME_ROLES)];
 const studentsOnly = [authenticateUser, authorizeRoles(PUBLIC_PORTAL_ALLOWED_ROLES)];
 const portalOrStudent = [
   authenticateUser,
-  authorizeRoles([...ADMIN_PORTAL_API_ROLES, ...PUBLIC_PORTAL_ALLOWED_ROLES]),
+  authorizeRoles([...READ_PROGRAMME_ROLES, ...PUBLIC_PORTAL_ALLOWED_ROLES]),
 ];
 
 // Programmes
 router.get("/", optionalAuth, listProgrammes);
-router.post("/", ...adminOnly, upload.single("image"), createProgramme);
+router.post("/", ...canWrite, upload.single("image"), createProgramme);
 router.get("/me", ...studentsOnly, getMyProgramme);
 
 // Hour distributions (nested — before /:id)
 router.get("/:id/hour-distributions", listHourDistributions);
-router.post("/:id/hour-distributions", ...adminOnly, createHourDistribution);
-router.put("/:id/hour-distributions/:hourId", ...adminOnly, updateHourDistribution);
-router.delete("/:id/hour-distributions/:hourId", ...adminOnly, deleteHourDistribution);
+router.post("/:id/hour-distributions", ...canWrite, createHourDistribution);
+router.put("/:id/hour-distributions/:hourId", ...canWrite, updateHourDistribution);
+router.delete("/:id/hour-distributions/:hourId", ...canWrite, deleteHourDistribution);
 
 // Modules — staff/admin or students only (not public)
 router.get("/:id/modules", ...portalOrStudent, listModules);
-router.post("/:id/modules", ...adminOnly, createModule);
-router.put("/:id/modules/:moduleId", ...adminOnly, updateModule);
-router.delete("/:id/modules/:moduleId", ...adminOnly, deleteModule);
+router.post("/:id/modules", ...canWrite, createModule);
+router.put("/:id/modules/:moduleId", ...canWrite, updateModule);
+router.delete("/:id/modules/:moduleId", ...canWrite, deleteModule);
 
 // Fee structure (nested — before /:id)
 router.get("/:id/fees", listFees);
-router.post("/:id/fees", ...adminOnly, createFee);
-router.put("/:id/fees/:feeId", ...adminOnly, updateFee);
-router.delete("/:id/fees/:feeId", ...adminOnly, deleteFee);
+router.post("/:id/fees", ...canWrite, createFee);
+router.put("/:id/fees/:feeId", ...canWrite, updateFee);
+router.delete("/:id/fees/:feeId", ...canWrite, deleteFee);
 
 // Subject requirements (nested — before /:id)
 router.get("/:id/subject-requirements", listSubjectRequirements);
-router.post("/:id/subject-requirements", ...adminOnly, createSubjectRequirement);
-router.put("/:id/subject-requirements/:requirementId", ...adminOnly, updateSubjectRequirement);
-router.delete("/:id/subject-requirements/:requirementId", ...adminOnly, deleteSubjectRequirement);
+router.post("/:id/subject-requirements", ...canWrite, createSubjectRequirement);
+router.put("/:id/subject-requirements/:requirementId", ...canWrite, updateSubjectRequirement);
+router.delete("/:id/subject-requirements/:requirementId", ...canWrite, deleteSubjectRequirement);
 
 router.get("/:id/enrolment-options", getProgrammeEnrolmentOptions);
 
 router.get("/:id", optionalAuth, getProgrammeById);
-router.put("/:id", ...adminOnly, upload.single("image"), updateProgramme);
-router.delete("/:id", ...adminOnly, deleteProgramme);
+router.put("/:id", ...canWrite, upload.single("image"), updateProgramme);
+router.delete("/:id", ...canWrite, deleteProgramme);
 
 router.use(errorHandler);
 

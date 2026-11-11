@@ -1,6 +1,15 @@
 const { Op } = require("sequelize");
-const { Department, Programme, ProgrammeDepartment, User } = require("../models");
+const { Department, Programme, ProgrammeDepartment, User, UserDepartment } = require("../models");
 const { logFromRequest } = require("../middleware/auditLogger");
+
+const staffInclude = {
+  model: User,
+  as: "staff",
+  attributes: ["id", "full_name", "email", "role", "position", "is_active"],
+  through: { attributes: [] },
+  required: false,
+  where: { role: { [Op.in]: ["hod", "lecturer"] } },
+};
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -22,9 +31,15 @@ function serializeDepartment(row) {
   if (plain.programmes_count == null && Array.isArray(plain.programmes)) {
     plain.programmes_count = plain.programmes.length;
   }
-  if (plain.staff_count == null && Array.isArray(plain.staff)) {
-    plain.staff_count = plain.staff.length;
+  const staff = Array.isArray(plain.staff) ? plain.staff : [];
+  if (plain.staff_count == null) {
+    plain.staff_count = staff.length;
   }
+  // Roles that own a department affiliation in the admin UI.
+  plain.hod_count = staff.filter((s) => s.role === "hod").length;
+  plain.lecturer_count = staff.filter((s) => s.role === "lecturer").length;
+  plain.hods = staff.filter((s) => s.role === "hod");
+  plain.lecturers = staff.filter((s) => s.role === "lecturer");
   return plain;
 }
 
@@ -82,13 +97,7 @@ exports.listDepartments = async (req, res) => {
           through: { attributes: [] },
           required: false,
         },
-        {
-          model: User,
-          as: "staff",
-          attributes: ["id"],
-          required: false,
-          where: { role: { [Op.in]: ["admin", "staff"] } },
-        },
+        staffInclude,
       ],
     });
 
@@ -118,13 +127,7 @@ exports.getDepartmentById = async (req, res) => {
           through: { attributes: [] },
           required: false,
         },
-        {
-          model: User,
-          as: "staff",
-          attributes: ["id", "full_name", "email", "role", "position", "is_active"],
-          required: false,
-          where: { role: { [Op.in]: ["admin", "staff"] } },
-        },
+        staffInclude,
       ],
     });
     if (!row) {
@@ -213,12 +216,7 @@ exports.deleteDepartment = async (req, res) => {
 
     const [programmeCount, staffCount] = await Promise.all([
       ProgrammeDepartment.count({ where: { department_id: row.id } }),
-      User.count({
-        where: {
-          department_id: row.id,
-          role: { [Op.in]: ["admin", "staff"] },
-        },
-      }),
+      UserDepartment.count({ where: { department_id: row.id } }),
     ]);
 
     if (programmeCount > 0 || staffCount > 0) {

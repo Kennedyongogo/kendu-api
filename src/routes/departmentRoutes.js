@@ -9,18 +9,20 @@ const {
 const {
   authenticateUser,
   authorizeRoles,
-  ADMIN_PORTAL_API_ROLES,
+  DEPARTMENT_READ_ROLES,
+  WRITE_DEPARTMENT_ROLES,
 } = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
-const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canRead = [authenticateUser, authorizeRoles(DEPARTMENT_READ_ROLES)];
+const canWrite = [authenticateUser, authorizeRoles(WRITE_DEPARTMENT_ROLES)];
 
-router.get("/", ...adminOnly, listDepartments);
-router.get("/:id", ...adminOnly, getDepartmentById);
-router.post("/", ...adminOnly, createDepartment);
-router.put("/:id", ...adminOnly, updateDepartment);
-router.delete("/:id", ...adminOnly, deleteDepartment);
+router.get("/", ...canRead, listDepartments);
+router.get("/:id", ...canRead, getDepartmentById);
+router.post("/", ...canWrite, createDepartment);
+router.put("/:id", ...canWrite, updateDepartment);
+router.delete("/:id", ...canWrite, deleteDepartment);
 
 router.use(errorHandler);
 

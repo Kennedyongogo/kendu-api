@@ -21,39 +21,45 @@ const {
   updateSubjectRequirementGlobal,
   deleteSubjectRequirementGlobal,
 } = require("../controllers/programmeController");
-const { authenticateUser, authorizeRoles, ADMIN_PORTAL_API_ROLES } = require("../middleware/auth");
+const {
+  authenticateUser,
+  authorizeRoles,
+  READ_PROGRAMME_ROLES,
+  WRITE_PROGRAMME_ROLES,
+} = require("../middleware/auth");
 const { errorHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
-const adminOnly = [authenticateUser, authorizeRoles(ADMIN_PORTAL_API_ROLES)];
+const canRead = [authenticateUser, authorizeRoles(READ_PROGRAMME_ROLES)];
+const canWrite = [authenticateUser, authorizeRoles(WRITE_PROGRAMME_ROLES)];
 
 // Fees
-router.get("/fees", ...adminOnly, listAllFees);
-router.get("/fees/:feeId", ...adminOnly, getFeeById);
-router.post("/fees", ...adminOnly, createFeeGlobal);
-router.put("/fees/:feeId", ...adminOnly, updateFeeGlobal);
-router.delete("/fees/:feeId", ...adminOnly, deleteFeeGlobal);
+router.get("/fees", ...canRead, listAllFees);
+router.get("/fees/:feeId", ...canRead, getFeeById);
+router.post("/fees", ...canWrite, createFeeGlobal);
+router.put("/fees/:feeId", ...canWrite, updateFeeGlobal);
+router.delete("/fees/:feeId", ...canWrite, deleteFeeGlobal);
 
 // Hours
-router.get("/hours", ...adminOnly, listAllHourDistributions);
-router.get("/hours/:hourId", ...adminOnly, getHourDistributionById);
-router.post("/hours", ...adminOnly, createHourDistributionGlobal);
-router.put("/hours/:hourId", ...adminOnly, updateHourDistributionGlobal);
-router.delete("/hours/:hourId", ...adminOnly, deleteHourDistributionGlobal);
+router.get("/hours", ...canRead, listAllHourDistributions);
+router.get("/hours/:hourId", ...canRead, getHourDistributionById);
+router.post("/hours", ...canWrite, createHourDistributionGlobal);
+router.put("/hours/:hourId", ...canWrite, updateHourDistributionGlobal);
+router.delete("/hours/:hourId", ...canWrite, deleteHourDistributionGlobal);
 
 // Modules
-router.get("/modules", ...adminOnly, listAllModules);
-router.get("/modules/:moduleId", ...adminOnly, getModuleById);
-router.post("/modules", ...adminOnly, createModuleGlobal);
-router.put("/modules/:moduleId", ...adminOnly, updateModuleGlobal);
-router.delete("/modules/:moduleId", ...adminOnly, deleteModuleGlobal);
+router.get("/modules", ...canRead, listAllModules);
+router.get("/modules/:moduleId", ...canRead, getModuleById);
+router.post("/modules", ...canWrite, createModuleGlobal);
+router.put("/modules/:moduleId", ...canWrite, updateModuleGlobal);
+router.delete("/modules/:moduleId", ...canWrite, deleteModuleGlobal);
 
 // Subject requirements
-router.get("/subjects", ...adminOnly, listAllSubjectRequirements);
-router.get("/subjects/:requirementId", ...adminOnly, getSubjectRequirementById);
-router.post("/subjects", ...adminOnly, createSubjectRequirementGlobal);
-router.put("/subjects/:requirementId", ...adminOnly, updateSubjectRequirementGlobal);
-router.delete("/subjects/:requirementId", ...adminOnly, deleteSubjectRequirementGlobal);
+router.get("/subjects", ...canRead, listAllSubjectRequirements);
+router.get("/subjects/:requirementId", ...canRead, getSubjectRequirementById);
+router.post("/subjects", ...canWrite, createSubjectRequirementGlobal);
+router.put("/subjects/:requirementId", ...canWrite, updateSubjectRequirementGlobal);
+router.delete("/subjects/:requirementId", ...canWrite, deleteSubjectRequirementGlobal);
 
 router.use(errorHandler);
 

@@ -5,7 +5,8 @@ const { notify } = require("../services/notificationService");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCHOOL_TZ = process.env.SCHOOL_TIMEZONE || "Africa/Nairobi";
-const MANAGER_ROLES = ["admin", "staff"];
+const { CHURCH_WRITE_ROLES } = require("../middleware/auth");
+const MANAGER_ROLES = CHURCH_WRITE_ROLES;
 const SHAPE_TYPES = [
   "room",
   "cross",
