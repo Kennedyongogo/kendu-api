@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const { sequelize, User, Programme, Department, Unit, StudentUnitRegistration, StudentTranscript, StudentTranscriptLine } = require("../models");
 const { buildTranscriptPdfBuffer } = require("../services/transcriptPdfService");
 
@@ -210,6 +211,158 @@ function defaultAdmissionDate(student) {
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
 }
+
+/**
+ * Class / cohort transcript summary for a programme placement.
+ * GET /api/transcripts/class-summary?programme_id=&year_of_study=&semester=&academic_year=
+ */
+exports.classSummary = async (req, res) => {
+  try {
+    const programme_id = normalizeUuid(req.query.programme_id, "programme_id");
+    const year_of_study = parseYear(req.query.year_of_study);
+    const semester = parseSemester(req.query.semester);
+    const academic_year = req.query.academic_year
+      ? normalizeAcademicYear(req.query.academic_year)
+      : null;
+
+    const programme = await Programme.findByPk(programme_id, {
+      attributes: ["id", "name", "category", "award"],
+    });
+    if (!programme) throw httpError(404, "Programme not found.");
+
+    const students = await User.findAll({
+      where: {
+        role: "student",
+        programme_id,
+        year_of_study,
+        semester,
+      },
+      attributes: [
+        "id",
+        "full_name",
+        "admission_number",
+        "year_of_study",
+        "semester",
+        "programme_id",
+        "student_status",
+      ],
+      order: [
+        ["full_name", "ASC"],
+        ["admission_number", "ASC"],
+      ],
+    });
+
+    const studentIds = students.map((s) => s.id);
+    const transcriptWhere = {
+      student_id: { [Op.in]: studentIds.length ? studentIds : ["00000000-0000-0000-0000-000000000000"] },
+      programme_id,
+      year_of_study,
+      semester,
+    };
+    if (academic_year) transcriptWhere.academic_year = academic_year;
+
+    const transcripts = studentIds.length
+      ? await StudentTranscript.findAll({
+          where: transcriptWhere,
+          include: [
+            {
+              model: StudentTranscriptLine,
+              as: "lines",
+              separate: true,
+              order: [
+                ["sort_order", "ASC"],
+                ["unit_code", "ASC"],
+              ],
+            },
+          ],
+          order: [
+            ["academic_year", "DESC"],
+            ["updated_at", "DESC"],
+          ],
+        })
+      : [];
+
+    const byStudent = new Map();
+    for (const row of transcripts) {
+      const plain = row.get({ plain: true });
+      const existing = byStudent.get(plain.student_id);
+      if (!existing) {
+        byStudent.set(plain.student_id, plain);
+        continue;
+      }
+      // Prefer issued over draft; then newest academic year already ordered DESC.
+      if (existing.status !== "issued" && plain.status === "issued") {
+        byStudent.set(plain.student_id, plain);
+      }
+    }
+
+    const gradeTally = { A: 0, B: 0, C: 0, D: 0, E: 0, "#": 0 };
+    let issued = 0;
+    let draft = 0;
+    let none = 0;
+
+    const rows = students.map((student) => {
+      const plain = student.get({ plain: true });
+      const transcript = byStudent.get(plain.id) || null;
+      let status = "none";
+      if (transcript?.status === "issued") {
+        status = "issued";
+        issued += 1;
+      } else if (transcript?.status === "draft") {
+        status = "draft";
+        draft += 1;
+      } else {
+        none += 1;
+      }
+
+      const lines = (transcript?.lines || []).map((line) => {
+        if (gradeTally[line.grade] != null) gradeTally[line.grade] += 1;
+        return {
+          unit_code: line.unit_code,
+          course_title: line.course_title,
+          hours: Number(line.hours) || 0,
+          grade: line.grade,
+        };
+      });
+
+      return {
+        student_id: plain.id,
+        full_name: plain.full_name,
+        admission_number: plain.admission_number,
+        student_status: plain.student_status || null,
+        transcript_id: transcript?.id || null,
+        transcript_status: status,
+        academic_year: transcript?.academic_year || academic_year || null,
+        recommendation: transcript?.recommendation || null,
+        line_count: lines.length,
+        lines,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        programme: programme.get({ plain: true }),
+        filters: {
+          programme_id,
+          year_of_study,
+          semester,
+          academic_year,
+        },
+        counts: {
+          students: students.length,
+          issued,
+          draft,
+          none,
+        },
+        grade_tally: gradeTally,
+        students: rows,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
 
 /** GET /api/transcripts/students/:studentId/context */
 exports.getStudentContext = async (req, res) => {

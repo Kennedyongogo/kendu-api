@@ -460,7 +460,7 @@ exports.downloadMyExamTimetablePdf = async (req, res) => {
   }
 };
 
-/** GET /api/exam-timetables/me/card/pdf — A4 exam card (fee gate via Access → Exams) */
+/** GET /api/exam-timetables/me/card/pdf — A4 exam clearance (fee gate via Access → Exams) */
 exports.downloadMyExamCardPdf = async (req, res) => {
   try {
     const ledger = await buildLedger(req.userId);
@@ -468,7 +468,7 @@ exports.downloadMyExamCardPdf = async (req, res) => {
     if (!access.eligible) {
       return res.status(403).json({
         success: false,
-        message: access.message || "Fee requirement not met for exam card",
+        message: access.message || "Fee requirement not met for exam clearance",
         data: { access },
       });
     }
@@ -532,7 +532,7 @@ exports.downloadMyExamCardPdf = async (req, res) => {
     const safeAdm = String(plain.admission_number || plain.id)
       .replace(/[^\w.-]+/g, "_")
       .slice(0, 40);
-    const filename = `KASMS-ExamCard-${safeAdm}.pdf`;
+    const filename = `KASMS-ExamClearance-${safeAdm}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

@@ -208,9 +208,7 @@ function drawPlanSummary(doc, y, period) {
 
 function drawSlotCard(doc, x, y, width, slot, index) {
   const cardH = 56;
-  const sigW = 118;
-  const sigGap = 10;
-  const contentW = width - sigW - sigGap - 8;
+  const contentW = width - 8;
 
   doc.roundedRect(x, y, width, cardH, 8).fillAndStroke("#f7faf8", "#d7e3df");
 
@@ -280,31 +278,6 @@ function drawSlotCard(doc, x, y, width, slot, index) {
       color: BRAND.inkMuted,
     });
   }
-
-  // Signature box on the far right
-  const sigX = x + width - sigW - 8;
-  const sigY = y + 8;
-  const sigH = cardH - 16;
-  doc.roundedRect(sigX, sigY, sigW, sigH, 6).fillAndStroke(BRAND.white, "#c5d9d3");
-  fixedText(doc, "INVIGILATOR SIGNATURE", sigX + 4, sigY + 4, sigW - 8, {
-    height: 9,
-    size: 5.5,
-    bold: true,
-    color: BRAND.inkMuted,
-    align: "center",
-  });
-  doc
-    .moveTo(sigX + 10, sigY + sigH - 14)
-    .lineTo(sigX + sigW - 10, sigY + sigH - 14)
-    .lineWidth(0.7)
-    .strokeColor("#c5d9d3")
-    .stroke();
-  fixedText(doc, "Sign / stamp", sigX + 4, sigY + sigH - 11, sigW - 8, {
-    height: 8,
-    size: 5.5,
-    color: "#9aa3b5",
-    align: "center",
-  });
 
   return cardH + 7;
 }

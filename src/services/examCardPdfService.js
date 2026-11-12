@@ -1,5 +1,5 @@
 /**
- * A4 student exam card PDF — one page.
+ * A4 student exam clearance PDF — one page.
  * Two-column table: exam details | teacher/invigilator signature.
  * Includes school logo, student photo, programme and cohort details.
  */
@@ -152,7 +152,7 @@ async function buildExamCardPdf({ student, period }) {
       margin: 0,
       autoFirstPage: true,
       info: {
-        Title: `Exam Card - ${safeText(student.full_name || student.admission_number, 48)}`,
+        Title: `Exam Clearance - ${safeText(student.full_name || student.admission_number, 48)}`,
         Author: BRAND.short,
       },
     });
@@ -164,277 +164,247 @@ async function buildExamCardPdf({ student, period }) {
 
     const pageW = doc.page.width;
     const pageH = doc.page.height;
-    const marginX = 36;
+    const marginX = 28;
     const contentW = pageW - marginX * 2;
 
-    // Page background
     doc.rect(0, 0, pageW, pageH).fill(BRAND.white);
-
-    // Top brand bar
-    doc.rect(0, 0, pageW, 64).fill(BRAND.green);
-    doc.rect(0, 64, pageW, 4).fill(BRAND.gold);
+    doc.lineWidth(1.4).rect(14, 14, pageW - 28, pageH - 28).stroke(BRAND.green);
+    doc.lineWidth(0.6).rect(18, 18, pageW - 36, pageH - 36).stroke(BRAND.gold);
 
     const logoPath = resolveLogoPath();
     if (logoPath) {
       try {
-        doc.image(logoPath, marginX, 12, { width: 40, height: 40 });
+        doc.image(logoPath, pageW / 2 - 18, 26, { width: 36, height: 36 });
       } catch {
         /* ignore */
       }
     }
 
-    const titleX = logoPath ? marginX + 50 : marginX;
-    write(doc, BRAND.short, titleX, 14, {
+    write(doc, BRAND.name.toUpperCase(), marginX, 66, {
       size: 11,
       bold: true,
-      color: BRAND.white,
-      width: 280,
+      color: BRAND.greenDark,
+      width: contentW,
+      align: "center",
     });
-    write(doc, BRAND.name, titleX, 30, {
+    write(doc, "OFFICE OF EXAMINATIONS", marginX, 82, {
       size: 8,
-      color: BRAND.cream,
-      width: 340,
+      color: BRAND.inkMuted,
+      width: contentW,
+      align: "center",
     });
-    write(doc, "OFFICIAL EXAM CARD", pageW - marginX - 160, 22, {
-      size: 12,
+    doc.moveTo(marginX + 80, 96).lineTo(pageW - marginX - 80, 96).lineWidth(1.2).stroke(BRAND.gold);
+    write(doc, "EXAMINATION CLEARANCE", marginX, 102, {
+      size: 16,
       bold: true,
-      color: BRAND.gold,
-      width: 160,
-      align: "right",
+      color: BRAND.navy,
+      width: contentW,
+      align: "center",
     });
+    write(
+      doc,
+      safeText(
+        `Academic year ${period.academic_year || student.academic_year || "-"}   |   Issued ${student.issued_on || "-"}`,
+        90
+      ),
+      marginX,
+      122,
+      { size: 8, color: BRAND.inkMuted, width: contentW, align: "center" }
+    );
 
-    // Student identity card
-    let y = 84;
-    doc.roundedRect(marginX, y, contentW, 108, 8).fill(BRAND.cream);
-    doc.roundedRect(marginX, y, contentW, 108, 8).lineWidth(1).stroke(BRAND.line);
+    let y = 142;
+    const idH = 118;
+    doc.roundedRect(marginX, y, contentW, idH, 4).lineWidth(0.8).stroke(BRAND.line);
+    doc.rect(marginX, y, 6, idH).fill(BRAND.green);
 
-    const photoX = marginX + 12;
-    const photoY = y + 11;
-    doc.roundedRect(photoX, photoY, photoW, photoH, 5).fillAndStroke(BRAND.white, BRAND.green);
+    const photoX = marginX + 16;
+    const photoY = y + 14;
+    doc.rect(photoX, photoY, photoW, photoH).lineWidth(1).stroke(BRAND.green);
     if (photoBuffer) {
       try {
         doc.image(photoBuffer, photoX, photoY, { width: photoW, height: photoH });
-        doc.lineWidth(1.2).roundedRect(photoX, photoY, photoW, photoH, 5).stroke(BRAND.green);
       } catch {
         drawPhotoPlaceholder(doc, photoX, photoY, photoW, photoH, student.full_name);
       }
     } else {
       drawPhotoPlaceholder(doc, photoX, photoY, photoW, photoH, student.full_name);
     }
-
-    const infoX = photoX + photoW + 16;
-    const infoW = contentW - photoW - 40;
-    write(doc, "STUDENT", infoX, y + 12, { size: 7, color: BRAND.inkMuted, width: infoW });
-    write(doc, safeText(student.full_name, 42), infoX, y + 24, {
-      size: 13,
-      bold: true,
-      color: BRAND.navy,
-      width: infoW,
+    write(doc, "Affix photo", photoX, photoY + photoH + 2, {
+      size: 6,
+      color: BRAND.inkMuted,
+      width: photoW,
+      align: "center",
     });
 
-    const metaLeft = infoX;
-    const metaRight = infoX + infoW / 2;
-    const metaColW = infoW / 2 - 8;
-
-    write(doc, "ADMISSION NO.", metaLeft, y + 46, { size: 6.5, color: BRAND.inkMuted, width: metaColW });
-    write(doc, safeText(student.admission_number, 24), metaLeft, y + 56, {
-      size: 10,
-      bold: true,
-      color: BRAND.greenDark,
-      width: metaColW,
-    });
-
-    write(doc, "PROGRAMME", metaRight, y + 46, { size: 6.5, color: BRAND.inkMuted, width: metaColW });
-    write(doc, safeText(student.programme_name || period.programme_name, 34), metaRight, y + 56, {
-      size: 9,
-      bold: true,
-      color: BRAND.navy,
-      width: metaColW,
-    });
-
-    write(doc, "YEAR / SEMESTER", metaLeft, y + 76, { size: 6.5, color: BRAND.inkMuted, width: metaColW });
-    write(
-      doc,
-      `Year ${student.year_of_study || period.year_of_study || "-"}  |  Semester ${
+    const infoX = photoX + photoW + 14;
+    const infoW = 250;
+    const field = (label, value, fy) => {
+      write(doc, label, infoX, fy, { size: 6.5, color: BRAND.inkMuted, width: infoW });
+      write(doc, safeText(value, 42), infoX, fy + 9, {
+        size: 10,
+        bold: true,
+        color: BRAND.navy,
+        width: infoW,
+      });
+    };
+    field("FULL NAME", student.full_name, y + 16);
+    field("ADMISSION NUMBER", student.admission_number, y + 40);
+    field("PROGRAMME", student.programme_name || period.programme_name, y + 64);
+    field(
+      "YEAR / SEMESTER",
+      `Year ${student.year_of_study || period.year_of_study || "-"}   Semester ${
         student.semester || period.semester || "-"
       }`,
-      metaLeft,
-      y + 86,
-      { size: 9, bold: true, color: BRAND.navy, width: metaColW }
+      y + 88
     );
 
-    write(doc, "ACADEMIC YEAR", metaRight, y + 76, { size: 6.5, color: BRAND.inkMuted, width: metaColW });
-    write(doc, safeText(period.academic_year || student.academic_year, 20), metaRight, y + 86, {
-      size: 9,
+    const stampX = marginX + contentW - 118;
+    const stampY = y + 28;
+    doc.save();
+    doc.translate(stampX + 48, stampY + 32);
+    doc.rotate(-8);
+    doc.roundedRect(-48, -28, 96, 56, 6).lineWidth(2.2).stroke(BRAND.green);
+    doc.roundedRect(-44, -24, 88, 48, 4).lineWidth(0.6).stroke(BRAND.green);
+    doc.restore();
+    write(doc, "CLEARED", stampX, stampY + 16, {
+      size: 13,
+      bold: true,
+      color: BRAND.green,
+      width: 96,
+      align: "center",
+    });
+    write(doc, "FEES MET", stampX, stampY + 34, {
+      size: 7,
+      bold: true,
+      color: BRAND.greenDark,
+      width: 96,
+      align: "center",
+    });
+
+    y += idH + 14;
+    write(doc, safeText(period.title || "End of semester examinations", 80), marginX, y, {
+      size: 10,
       bold: true,
       color: BRAND.navy,
-      width: metaColW,
+      width: contentW,
+    });
+    y += 14;
+    const windowBits = [
+      period.period_start ? `${formatDate(period.period_start)} - ${formatDate(period.period_end)}` : null,
+      `${slots.length} registered paper${slots.length === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+    write(doc, safeText(windowBits.join("   |   "), 100), marginX, y, {
+      size: 8,
+      color: BRAND.inkMuted,
+      width: contentW,
     });
 
-    // Period title band
-    y = 206;
-    doc.roundedRect(marginX, y, contentW, 36, 6).fill(BRAND.greenDark);
-    write(doc, safeText(period.title || "Examination timetable", 70), marginX + 12, y + 7, {
-      size: 11,
-      bold: true,
-      color: BRAND.white,
-      width: contentW - 24,
-    });
-    const windowLabel = [
-      period.period_start || period.period_end
-        ? `${formatDate(period.period_start)} - ${formatDate(period.period_end)}`
-        : null,
-      `${slots.length} paper${slots.length === 1 ? "" : "s"}`,
-    ]
-      .filter(Boolean)
-      .join("  ·  ");
-    write(doc, safeText(windowLabel, 90), marginX + 12, y + 22, {
-      size: 8,
-      color: BRAND.gold,
-      width: contentW - 24,
-    });
-
-    // Table header
-    y = 256;
-    const examColW = contentW * 0.62;
-    const signColW = contentW - examColW;
-    const headerH = 22;
-
-    doc.rect(marginX, y, examColW, headerH).fill(BRAND.green);
-    doc.rect(marginX + examColW, y, signColW, headerH).fill(BRAND.greenDark);
-    write(doc, "EXAM / PAPER", marginX + 10, y + 6, {
-      size: 8,
-      bold: true,
-      color: BRAND.white,
-      width: examColW - 16,
-    });
-    write(doc, "TEACHER / INVIGILATOR SIGNATURE", marginX + examColW + 10, y + 6, {
-      size: 8,
-      bold: true,
-      color: BRAND.white,
-      width: signColW - 16,
+    y += 18;
+    const cols = [
+      { label: "NO", w: 28 },
+      { label: "EXAMINATION PAPER", w: contentW * 0.34 },
+      { label: "DATE", w: contentW * 0.16 },
+      { label: "TIME", w: contentW * 0.14 },
+      { label: "VENUE", w: contentW * 0.14 },
+      { label: "INVIGILATOR", w: 0 },
+    ];
+    const used = cols.slice(0, -1).reduce((sum, col) => sum + col.w, 0);
+    cols[cols.length - 1].w = contentW - used;
+    const headerH = 20;
+    let x = marginX;
+    cols.forEach((col) => {
+      doc.rect(x, y, col.w, headerH).fill(BRAND.green);
+      write(doc, col.label, x + 4, y + 6, {
+        size: 6.5,
+        bold: true,
+        color: BRAND.white,
+        width: col.w - 8,
+      });
+      x += col.w;
     });
 
     y += headerH;
-    const tableBottom = pageH - 78;
-    const maxRows = Math.max(1, slots.length);
-    // Fit as many rows as possible on one page
-    const available = tableBottom - y;
-    const rowH = Math.min(42, Math.max(28, Math.floor(available / Math.max(maxRows, 1))));
+    const tableBottom = pageH - 118;
+    const available = Math.max(36, tableBottom - y);
+    const rowH = Math.min(36, Math.max(26, Math.floor(available / Math.max(slots.length || 1, 1))));
+    const rowsToDraw = slots.slice(0, Math.max(1, Math.floor(available / 26)));
 
-    const rowsToDraw = slots.length
-      ? slots.slice(0, Math.floor(available / Math.min(rowH, 28)))
-      : [];
-
-    if (!rowsToDraw.length) {
-      doc.rect(marginX, y, contentW, 40).fill(BRAND.cream);
-      doc.rect(marginX, y, contentW, 40).stroke(BRAND.line);
-      write(doc, "No exam papers listed on the published timetable.", marginX + 12, y + 14, {
+    if (!slots.length) {
+      doc.rect(marginX, y, contentW, 32).stroke(BRAND.line);
+      write(doc, "No examination papers are listed on this clearance.", marginX + 8, y + 10, {
         size: 9,
         color: BRAND.inkMuted,
-        width: contentW - 24,
+        width: contentW - 16,
       });
-      y += 40;
+      y += 32;
     } else {
       rowsToDraw.forEach((slot, index) => {
         const rowY = y + index * rowH;
-        if (index % 2 === 1) {
-          doc.rect(marginX, rowY, contentW, rowH).fill(BRAND.rowAlt);
-        }
-        doc.rect(marginX, rowY, examColW, rowH).stroke(BRAND.line);
-        doc.rect(marginX + examColW, rowY, signColW, rowH).stroke(BRAND.line);
-
-        const title = safeText(slot.title, 48);
-        const unitLine =
-          slot.unit_code || slot.unit_name
-            ? safeText(
-                [slot.unit_code, slot.unit_name].filter(Boolean).join(" · "),
-                52
-              )
-            : null;
-        const when = `${formatDate(slot.starts_at)}  ·  ${formatTimeRange(slot.starts_at, slot.ends_at)}`;
-        const venue = slot.venue ? `Venue: ${safeText(slot.venue, 36)}` : null;
-
-        write(doc, title, marginX + 10, rowY + 5, {
-          size: 9,
-          bold: true,
-          color: BRAND.navy,
-          width: examColW - 18,
-        });
-        let detailY = rowY + 17;
-        if (unitLine && rowH >= 34) {
-          write(doc, unitLine, marginX + 10, detailY, {
-            size: 7,
-            color: BRAND.inkMuted,
-            width: examColW - 18,
-          });
-          detailY += 11;
-        }
-        write(doc, when, marginX + 10, detailY, {
-          size: 7.5,
-          color: BRAND.greenDark,
-          width: examColW - 18,
-        });
-        if (venue && rowH >= 40) {
-          write(doc, venue, marginX + 10, detailY + 11, {
-            size: 7,
-            color: BRAND.inkMuted,
-            width: examColW - 18,
-          });
-        }
-
-        // Signature line
-        const sigX = marginX + examColW + 14;
-        const sigW = signColW - 28;
-        const sigY = rowY + rowH / 2 + 4;
-        doc
-          .moveTo(sigX, sigY)
-          .lineTo(sigX + sigW, sigY)
-          .lineWidth(0.8)
-          .stroke(BRAND.line);
-        write(doc, "Sign", sigX, sigY + 3, {
-          size: 6,
-          color: BRAND.inkMuted,
-          width: sigW,
+        if (index % 2 === 1) doc.rect(marginX, rowY, contentW, rowH).fill(BRAND.rowAlt);
+        const unitBit = [slot.unit_code, slot.title].filter(Boolean).join("  ");
+        const values = [
+          String(index + 1),
+          safeText(unitBit || slot.unit_name, 42),
+          formatDate(slot.starts_at).replace(/,?\s*\d{4}$/, ""),
+          formatTimeRange(slot.starts_at, slot.ends_at),
+          safeText(slot.venue || "-", 18),
+          "",
+        ];
+        let cx = marginX;
+        cols.forEach((col, colIndex) => {
+          doc.rect(cx, rowY, col.w, rowH).lineWidth(0.4).stroke(BRAND.line);
+          if (colIndex === cols.length - 1) {
+            doc
+              .moveTo(cx + 8, rowY + rowH - 8)
+              .lineTo(cx + col.w - 8, rowY + rowH - 8)
+              .lineWidth(0.6)
+              .stroke(BRAND.line);
+          } else {
+            write(doc, values[colIndex], cx + 4, rowY + (rowH > 30 ? 8 : 6), {
+              size: colIndex === 1 ? 8 : 7,
+              bold: colIndex === 1,
+              color: BRAND.navy,
+              width: col.w - 8,
+              height: rowH - 8,
+            });
+          }
+          cx += col.w;
         });
       });
       y += rowsToDraw.length * rowH;
-
       if (slots.length > rowsToDraw.length) {
         write(
           doc,
-          `Showing ${rowsToDraw.length} of ${slots.length} papers on this card. See the full timetable PDF for the complete list.`,
+          `Showing ${rowsToDraw.length} of ${slots.length} papers. Download the full timetable for the rest.`,
           marginX,
-          y + 6,
-          { size: 7.5, color: BRAND.inkMuted, width: contentW }
+          y + 4,
+          { size: 7, color: BRAND.inkMuted, width: contentW }
         );
-        y += 20;
       }
     }
 
-    // Footer
-    const footerY = pageH - 58;
-    doc.rect(0, footerY, pageW, 58).fill(BRAND.greenDark);
+    const footY = pageH - 96;
     write(
       doc,
-      "Present this card at every paper. An invigilator must sign after each exam. This card is invalid without a valid fee clearance.",
+      "Place this clearance on your desk at every paper together with your student ID. An invigilator signs after each paper. This document is valid only while the fee clearance remains CLEARED.",
       marginX,
-      footerY + 10,
-      { size: 7.5, color: BRAND.cream, width: contentW }
+      footY,
+      { size: 7.5, color: BRAND.inkMuted, width: contentW }
     );
-    write(
-      doc,
-      `Issued ${safeText(student.issued_on, 24)}  ·  ${BRAND.short} Academic Office`,
-      marginX,
-      footerY + 28,
-      { size: 7, color: BRAND.gold, width: contentW / 2 }
-    );
-    write(doc, "STUDENT COPY", pageW - marginX - 100, footerY + 28, {
-      size: 8,
+
+    const signY = footY + 28;
+    const signW = contentW / 2 - 16;
+    doc.moveTo(marginX, signY).lineTo(marginX + signW, signY).lineWidth(0.7).stroke(BRAND.navy);
+    write(doc, "Student signature", marginX, signY + 4, { size: 7, color: BRAND.inkMuted, width: signW });
+    const rightX = marginX + contentW / 2 + 16;
+    doc.moveTo(rightX, signY).lineTo(rightX + signW, signY).lineWidth(0.7).stroke(BRAND.navy);
+    write(doc, "Examinations office", rightX, signY + 4, { size: 7, color: BRAND.inkMuted, width: signW });
+    write(doc, `${BRAND.short}  ·  STUDENT COPY`, marginX, pageH - 36, {
+      size: 7,
       bold: true,
-      color: BRAND.white,
-      width: 100,
-      align: "right",
+      color: BRAND.greenDark,
+      width: contentW,
+      align: "center",
     });
 
     doc.end();

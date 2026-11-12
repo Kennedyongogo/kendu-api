@@ -1585,10 +1585,7 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    if (
-      ["secretary", "academic_registrar"].includes(req.user.role) &&
-      normalizedRole !== "student"
-    ) {
+    if (req.user.role === "secretary" && normalizedRole !== "student") {
       return res.status(403).json({
         success: false,
         message: "This office can create student accounts only",
@@ -1741,7 +1738,7 @@ exports.updateUser = async (req, res) => {
     }
 
     if (
-      ["secretary", "academic_registrar"].includes(req.user.role) &&
+      req.user.role === "secretary" &&
       req.user.id !== user.id &&
       user.role !== "student"
     ) {

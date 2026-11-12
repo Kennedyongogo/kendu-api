@@ -61,16 +61,25 @@ async function loadUserDepartmentIds(userId, fallbackDepartmentId = null) {
   return fallbackDepartmentId ? [String(fallbackDepartmentId)] : [];
 }
 
+/**
+ * RBAC mirrors LMS requirements capture:
+ * - Academic registrar: read-only on listed modules
+ * - Secretary: students / admissions / registrations RW; transcripts RO
+ * - Lecturer: assignments editable only; students / timetables / library RO
+ * - Examinations: approve exam attendance; fees / programmes / class timetables RO
+ */
 const READ_STUDENT_ROLES = PORTAL_ROLES;
-const WRITE_STUDENT_ROLES = [...ADMIN_WRITE_ROLES, "secretary", "academic_registrar"];
+const WRITE_STUDENT_ROLES = [...ADMIN_WRITE_ROLES, "secretary"];
 const WRITE_BOARDING_ROLES = [...WRITE_STUDENT_ROLES, "dean"];
 
 const READ_ADMISSION_ROLES = [
   ...ADMIN_WRITE_ROLES,
   ...LEADERSHIP_ROLES,
   "academic_registrar",
+  "secretary",
+  "hod",
 ];
-const WRITE_ADMISSION_ROLES = [...ADMIN_WRITE_ROLES, "academic_registrar"];
+const WRITE_ADMISSION_ROLES = [...ADMIN_WRITE_ROLES, "secretary"];
 
 const READ_FEE_ROLES = [
   ...ADMIN_WRITE_ROLES,
@@ -83,16 +92,10 @@ const READ_FEE_ROLES = [
 const WRITE_FEE_ROLES = [...ADMIN_WRITE_ROLES, "finance"];
 const ACCESS_MANAGE_ROLES = [...ADMIN_WRITE_ROLES, "finance"];
 
-/** Manage class + exam timetables: create / edit / delete. */
-const WRITE_TIMETABLE_ROLES = [
-  ...ADMIN_WRITE_ROLES,
-  "dean",
-  "lecturer",
-  "examinations",
-  "academic_registrar",
-  "hod",
-];
-const WRITE_EXAM_ROLES = WRITE_TIMETABLE_ROLES;
+/** Class timetable create/edit: admin, dean, HOD (lecturer/exams/AR are view-only). */
+const WRITE_TIMETABLE_ROLES = [...ADMIN_WRITE_ROLES, "dean", "hod"];
+/** Exam timetable create/edit + transcript issue: admin + examinations office. */
+const WRITE_EXAM_ROLES = [...ADMIN_WRITE_ROLES, "examinations"];
 /** Everyone in the portal except catering may view timetables. */
 const READ_TIMETABLE_ROLES = PORTAL_ROLES.filter((role) => role !== CATERING_ROLE);
 const READ_EXAM_ROLES = READ_TIMETABLE_ROLES;
@@ -109,19 +112,14 @@ const READ_REGISTRATION_ROLES = [
   "secretary",
   "lecturer",
 ];
-const WRITE_REGISTRATION_ROLES = [
-  ...ADMIN_WRITE_ROLES,
-  "hod",
-  "secretary",
-  "academic_registrar",
-];
+const WRITE_REGISTRATION_ROLES = [...ADMIN_WRITE_ROLES, "hod", "secretary"];
 
 const READ_PROGRAMME_ROLES = PORTAL_ROLES;
-/** Programme & department structure: admin + academic registrar write; others read. */
-const WRITE_PROGRAMME_ROLES = [...ADMIN_WRITE_ROLES, "academic_registrar"];
-const WRITE_DEPARTMENT_ROLES = [...ADMIN_WRITE_ROLES, "academic_registrar"];
+/** Programme & department structure: admin write; academic registrar is read-only per capture. */
+const WRITE_PROGRAMME_ROLES = [...ADMIN_WRITE_ROLES];
+const WRITE_DEPARTMENT_ROLES = [...ADMIN_WRITE_ROLES];
 
-/** Units catalogue: leadership/secretary view; academic offices create & edit. */
+/** Units catalogue: most offices view; admin + HOD maintain catalogue. */
 const READ_UNIT_ROLES = [
   ...ADMIN_WRITE_ROLES,
   ...LEADERSHIP_ROLES,
@@ -132,14 +130,7 @@ const READ_UNIT_ROLES = [
   "examinations",
   "dean",
 ];
-const WRITE_UNIT_ROLES = [
-  ...ADMIN_WRITE_ROLES,
-  "hod",
-  "lecturer",
-  "academic_registrar",
-  "examinations",
-  "dean",
-];
+const WRITE_UNIT_ROLES = [...ADMIN_WRITE_ROLES, "hod"];
 const CHURCH_READ_ROLES = [...ADMIN_WRITE_ROLES, "dean", ...LEADERSHIP_ROLES, "hod"];
 const CHURCH_WRITE_ROLES = [...ADMIN_WRITE_ROLES, "dean"];
 const MEAL_ADMIN_ROLES = ["admin", "dean", "catering"];

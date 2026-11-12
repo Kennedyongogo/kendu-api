@@ -3,6 +3,7 @@ const {
   getStudentContext,
   listForStudent,
   listRegisteredUnits,
+  classSummary,
   getOne,
   create,
   update,
@@ -31,6 +32,7 @@ router.get("/me", ...canStudent, listMine);
 router.get("/me/:id/pdf", ...canStudent, getMinePdf);
 router.get("/me/:id", ...canStudent, getMine);
 
+router.get("/class-summary", ...canRead, classSummary);
 router.get("/students/:studentId/context", ...canRead, getStudentContext);
 router.get("/students/:studentId/registered-units", ...canRead, listRegisteredUnits);
 router.get("/students/:studentId", ...canRead, listForStudent);

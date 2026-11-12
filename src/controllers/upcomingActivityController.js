@@ -1,21 +1,28 @@
 const { Op } = require("sequelize");
 const { UpcomingActivity, User } = require("../models");
 
-const SHAPES = [
-  "circle",
-  "pill",
-  "rounded_square",
-  "diamond",
-  "hexagon",
-  "oval",
-  "speech_bubble",
-  "ribbon",
-  "banner",
-  "star",
-];
+const SHAPES = ["event_card", "ticket"];
+const LEGACY_SHAPE_MAP = {
+  circle: "event_card",
+  pill: "ticket",
+  rounded_square: "event_card",
+  diamond: "event_card",
+  hexagon: "event_card",
+  oval: "event_card",
+  speech_bubble: "event_card",
+  ribbon: "ticket",
+  banner: "ticket",
+  star: "event_card",
+};
 const ACCENTS = ["gold", "blue", "navy", "cream"];
 const POSITIONS = ["top_right", "mid_right", "bottom_right", "top_left", "mid_left"];
 const STATUSES = ["draft", "pending", "approved", "rejected"];
+
+function normalizeShape(value) {
+  const raw = String(value || "").trim() || "event_card";
+  if (SHAPES.includes(raw)) return raw;
+  return LEGACY_SHAPE_MAP[raw] || "event_card";
+}
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -37,6 +44,7 @@ function toDate(value) {
 
 function serialize(row) {
   const plain = row.get ? row.get({ plain: true }) : { ...row };
+  plain.shape = normalizeShape(plain.shape);
   plain.creator_name = plain.creator?.full_name || null;
   plain.approver_name = plain.approver?.full_name || null;
   delete plain.creator;
@@ -62,13 +70,7 @@ function parseBody(body, { partial = false } = {}) {
   }
   if (!partial || body.body !== undefined) out.body = toNullableString(body.body)?.slice(0, 280) || null;
   if (!partial || body.shape !== undefined) {
-    const shape = toNullableString(body.shape) || "pill";
-    if (!SHAPES.includes(shape)) {
-      const err = new Error("Invalid shape");
-      err.status = 400;
-      throw err;
-    }
-    out.shape = shape;
+    out.shape = normalizeShape(body.shape || "event_card");
   }
   if (!partial || body.accent !== undefined) {
     const accent = toNullableString(body.accent) || "gold";
@@ -189,10 +191,15 @@ exports.getActivity = async (req, res) => {
 exports.createActivity = async (req, res) => {
   try {
     const fields = parseBody(req.body);
+    const now = new Date();
     const row = await UpcomingActivity.create({
       ...fields,
-      status: "draft",
+      status: "approved",
       created_by: req.user.id,
+      approved_by: req.user.id,
+      approved_at: now,
+      display_start: fields.display_start || now,
+      rejection_reason: null,
     });
     const full = await UpcomingActivity.findByPk(row.id, { include: includeUsers });
     return res.status(201).json({ success: true, data: serialize(full) });
@@ -205,19 +212,16 @@ exports.updateActivity = async (req, res) => {
   try {
     const row = await UpcomingActivity.findByPk(req.params.id);
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
-    if (row.status === "approved" && req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Approved activities can only be edited by admin" });
-    }
     const fields = parseBody(req.body, { partial: true });
-    // Editing an approved item pulls it back to draft unless admin keeps it
-    if (row.status === "approved" && req.body.keep_approved !== "true" && req.body.keep_approved !== true) {
-      fields.status = "draft";
-      fields.approved_by = null;
-      fields.approved_at = null;
+    // No approval workflow — save stays live/published.
+    fields.status = "approved";
+    fields.rejection_reason = null;
+    if (!row.approved_at) {
+      fields.approved_by = req.user.id;
+      fields.approved_at = new Date();
     }
-    if (row.status === "rejected") {
-      fields.status = "draft";
-      fields.rejection_reason = null;
+    if (!row.display_start && fields.display_start === undefined) {
+      fields.display_start = new Date();
     }
     await row.update(fields);
     const full = await UpcomingActivity.findByPk(row.id, { include: includeUsers });

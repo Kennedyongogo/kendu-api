@@ -18,7 +18,7 @@ const FEATURE_DEFAULTS = {
     min_fee_percent: 0,
     is_enabled: false,
     description:
-      "Fee share required before viewing/downloading the exam timetable and exam card.",
+      "Fee share required before viewing/downloading the exam timetable and exam clearance.",
   },
 };
 

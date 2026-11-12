@@ -1,6 +1,6 @@
 const { DataTypes } = require("sequelize");
 
-/** Floating hero “upcoming activity” ads — draft → pending → approved */
+/** Floating hero “upcoming activity” ads — save publishes live (approved) */
 module.exports = (sequelize) => {
   const UpcomingActivity = sequelize.define(
     "UpcomingActivity",
@@ -18,22 +18,11 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING(280),
         allowNull: true,
       },
-      /** Visual shape for the floating promo */
+      /** Visual style for the floating promo: event_card | ticket */
       shape: {
-        type: DataTypes.ENUM(
-          "circle",
-          "pill",
-          "rounded_square",
-          "diamond",
-          "hexagon",
-          "oval",
-          "speech_bubble",
-          "ribbon",
-          "banner",
-          "star"
-        ),
+        type: DataTypes.STRING(40),
         allowNull: false,
-        defaultValue: "pill",
+        defaultValue: "event_card",
       },
       accent: {
         type: DataTypes.ENUM("gold", "blue", "navy", "cream"),

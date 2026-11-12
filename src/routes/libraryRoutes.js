@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const {
   getStats,
+  weeklySummary,
   getMyLibrary,
   listBooks,
   createBook,
@@ -56,6 +57,7 @@ const excelUpload = multer({
 router.get("/me", ...studentsOnly, getMyLibrary);
 
 router.get("/stats", ...canRead, getStats);
+router.get("/summary/weekly", ...canRead, weeklySummary);
 router.get("/borrowers", ...canWrite, searchBorrowers);
 
 router.get("/books/import-template", ...canWrite, downloadBooksImportTemplate);

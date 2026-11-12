@@ -305,6 +305,115 @@ exports.getMyLibrary = async (req, res) => {
   }
 };
 
+/**
+ * Leadership / library weekly activity summary.
+ * GET /api/library/summary/weekly?from=&to=
+ */
+exports.weeklySummary = async (req, res) => {
+  try {
+    await markOverdueLoans();
+
+    const to = req.query.to ? new Date(req.query.to) : new Date();
+    const from = req.query.from
+      ? new Date(req.query.from)
+      : new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw httpError(400, "Invalid from/to date.");
+    }
+    if (from > to) throw httpError(400, "from must be before to.");
+
+    const [issued, returned, overdueOpen, topBooksRaw, byRoleRaw, overdueList] = await Promise.all([
+      LibraryLoan.count({
+        where: { issued_at: { [Op.between]: [from, to] } },
+      }),
+      LibraryLoan.count({
+        where: {
+          returned_at: { [Op.between]: [from, to] },
+          status: "returned",
+        },
+      }),
+      LibraryLoan.count({
+        where: {
+          returned_at: null,
+          status: "overdue",
+          due_at: { [Op.lte]: to },
+        },
+      }),
+      LibraryLoan.findAll({
+        attributes: [
+          "book_id",
+          [fn("COUNT", col("LibraryLoan.id")), "loan_count"],
+        ],
+        where: { issued_at: { [Op.between]: [from, to] } },
+        include: [{ model: LibraryBook, as: "book", attributes: ["id", "title", "author"] }],
+        group: ["LibraryLoan.book_id", "book.id", "book.title", "book.author"],
+        order: [[literal("loan_count"), "DESC"]],
+        limit: 8,
+      }),
+      LibraryLoan.findAll({
+        attributes: [
+          [col("borrower.role"), "role"],
+          [fn("COUNT", col("LibraryLoan.id")), "count"],
+        ],
+        include: [
+          {
+            model: User,
+            as: "borrower",
+            attributes: [],
+            required: true,
+          },
+        ],
+        where: { issued_at: { [Op.between]: [from, to] } },
+        group: ["borrower.role"],
+        raw: true,
+      }),
+      LibraryLoan.findAll({
+        where: {
+          returned_at: null,
+          status: "overdue",
+        },
+        include: [
+          { model: LibraryBook, as: "book", attributes: ["id", "title"] },
+          {
+            model: User,
+            as: "borrower",
+            attributes: ["id", "full_name", "role", "admission_number"],
+          },
+        ],
+        order: [["due_at", "ASC"]],
+        limit: 20,
+      }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        from,
+        to,
+        issued,
+        returned,
+        overdue_open: overdueOpen,
+        by_borrower_role: byRoleRaw.map((row) => ({
+          role: row.role,
+          count: Number(row.count) || 0,
+        })),
+        top_books: topBooksRaw.map((row) => {
+          const plain = row.get({ plain: true });
+          return {
+            book_id: plain.book_id,
+            title: plain.book?.title || "Unknown",
+            author: plain.book?.author || null,
+            loan_count: Number(plain.loan_count) || 0,
+          };
+        }),
+        overdue_loans: overdueList.map(serializeLoan),
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message });
+  }
+};
+
 /** GET /api/library/stats */
 exports.getStats = async (req, res) => {
   try {
