@@ -344,6 +344,14 @@ const sanitizeUser = (user) => {
   return plain;
 };
 
+/** Staff/admin: one school day. Students: a bit longer for portal use. */
+function tokenTtlForRole(role) {
+  if (role === "student") {
+    return process.env.JWT_EXPIRES_STUDENT || "12h";
+  }
+  return process.env.JWT_EXPIRES_STAFF || "8h";
+}
+
 const signToken = (user) =>
   jwt.sign(
     {
@@ -354,7 +362,7 @@ const signToken = (user) =>
       role: user.role,
     },
     config.jwtSecret,
-    { expiresIn: "7d" }
+    { expiresIn: tokenTtlForRole(user.role) }
   );
 
 const PUBLIC_REGISTER_ROLES = ["student"];
