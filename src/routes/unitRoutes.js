@@ -49,7 +49,12 @@ router.put("/:id", ...canWriteUnits, updateUnit);
 router.post("/:id/submit", ...canWriteUnits, submitUnit);
 router.post("/:id/approve", ...adminOnly, approveUnit);
 router.post("/:id/reject", ...adminOnly, rejectUnit);
-router.post("/:id/register", ...canWriteRegistrations, registerForUnit);
+router.post(
+  "/:id/register",
+  authenticateUser,
+  authorizeRoles([...WRITE_REGISTRATION_ROLES, ...PUBLIC_PORTAL_ALLOWED_ROLES]),
+  registerForUnit
+);
 router.delete("/:id", ...canWriteUnits, deleteUnit);
 
 router.use(errorHandler);

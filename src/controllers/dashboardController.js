@@ -9,17 +9,23 @@ const {
   StudentUnitRegistration,
   Assignment,
   ExamPeriod,
+  ExamSlot,
   LibraryLoan,
   LibraryBook,
   FeePayment,
   Announcement,
+  Brochure,
   TimetableEntry,
   ChurchBooking,
+  ChurchService,
   MealServing,
+  MealCard,
+  AccessPolicy,
   UserDepartment,
   ProgrammeDepartment,
 } = require("../models");
 const { OFFICE_ROLES, getActorDepartmentIds, DEPARTMENT_SCOPED_ROLES } = require("../middleware/auth");
+const { cached, cacheKey } = require("../services/cacheService");
 
 const ADMISSION_STATUSES = ["pending", "under_review", "accepted", "rejected"];
 
@@ -150,6 +156,14 @@ async function buildDashboardStats(req) {
       }
     }
 
+    const now = new Date();
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date();
+    dayEnd.setHours(23, 59, 59, 999);
+    const examWhere = programmeFilter ? { programme_id: programmeFilter } : {};
+    const timetableWhere = programmeFilter ? { programme_id: programmeFilter } : {};
+
     const [
       totalUsers,
       adminCount,
@@ -181,6 +195,24 @@ async function buildDashboardStats(req) {
       activeStudents,
       pendingUnits,
       approvedUnits,
+      draftUnits,
+      admissionsPending,
+      admissionsAccepted,
+      registrationsActive,
+      announcementsPublished,
+      brochures,
+      libraryLoansActive,
+      libraryLoansOverdue,
+      feePaymentsConfirmed,
+      feeAmountConfirmed,
+      studentsBoarders,
+      studentsNonBoarders,
+      mealCards,
+      examSlots,
+      churchServices,
+      churchServicesUpcoming,
+      accessPolicies,
+      accessPoliciesEnabled,
     ] = await Promise.all([
       safeCount(() => User.count()),
       safeCount(() => User.count({ where: { role: "admin" } })),
@@ -215,27 +247,19 @@ async function buildDashboardStats(req) {
       }),
       safeCount(() => Assignment.count({ where: assignmentWhere })),
       safeCount(() => Assignment.count({ where: { ...assignmentWhere, is_published: true } })),
-      safeCount(() => countBy(ExamPeriod, programmeFilter ? { programme_id: programmeFilter } : {}, "status"), {}),
-      safeCount(() => ExamPeriod.count({ where: programmeFilter ? { programme_id: programmeFilter } : {} })),
+      safeCount(() => countBy(ExamPeriod, examWhere, "status"), {}),
+      safeCount(() => ExamPeriod.count({ where: examWhere })),
       safeCount(() => LibraryBook.count()),
       safeCount(() => countBy(LibraryLoan, {}, "status"), {}),
       safeCount(() => FeePayment.count()),
       safeCount(() => Announcement.count()),
+      safeCount(() => TimetableEntry.count({ where: timetableWhere })),
+      safeCount(() => ChurchBooking.count({ where: { status: "active" } })),
       safeCount(() =>
-        TimetableEntry.count({
-          where: programmeFilter ? { programme_id: programmeFilter } : {},
+        MealServing.count({
+          where: { served_at: { [Op.between]: [dayStart, dayEnd] } },
         })
       ),
-      safeCount(() => ChurchBooking.count({ where: { status: "active" } })),
-      safeCount(() => {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        return MealServing.count({
-          where: { served_at: { [Op.between]: [start, end] } },
-        });
-      }),
       safeCount(async () => {
         const rows = await User.findAll({
           attributes: ["role", [sequelize.fn("COUNT", sequelize.col("id")), "count"]],
@@ -252,6 +276,49 @@ async function buildDashboardStats(req) {
       safeCount(() => User.count({ where: { ...studentWhere, is_active: true } })),
       safeCount(() => Unit.count({ where: { ...unitWhere, status: "pending" } })),
       safeCount(() => Unit.count({ where: { ...unitWhere, status: "approved" } })),
+      safeCount(() => Unit.count({ where: { ...unitWhere, status: "draft" } })),
+      safeCount(() =>
+        AdmissionApplication.count({
+          where: { ...admissionWhere, status: { [Op.in]: ["pending", "under_review"] } },
+        })
+      ),
+      safeCount(() => AdmissionApplication.count({ where: { ...admissionWhere, status: "accepted" } })),
+      safeCount(async () => {
+        const unitIds = isDeptScoped && departmentIds.length
+          ? (await Unit.findAll({ where: unitWhere, attributes: ["id"], raw: true })).map((u) => u.id)
+          : null;
+        const where = {
+          status: "registered",
+          ...(unitIds
+            ? { unit_id: { [Op.in]: unitIds.length ? unitIds : ["00000000-0000-0000-0000-000000000000"] } }
+            : {}),
+        };
+        return StudentUnitRegistration.count({ where });
+      }),
+      safeCount(() => Announcement.count({ where: { is_published: true } })),
+      safeCount(() => Brochure.count()),
+      safeCount(() => LibraryLoan.count({ where: { status: "active" } })),
+      safeCount(() => LibraryLoan.count({ where: { status: "overdue" } })),
+      safeCount(() => FeePayment.count({ where: { status: "confirmed" } })),
+      safeCount(async () => {
+        const sum = await FeePayment.sum("amount", { where: { status: "confirmed" } });
+        return Number(sum || 0);
+      }),
+      safeCount(() => User.count({ where: { ...studentWhere, boarding_status: "boarder" } })),
+      safeCount(() => User.count({ where: { ...studentWhere, boarding_status: "non_boarder" } })),
+      safeCount(() => MealCard.count()),
+      safeCount(() => ExamSlot.count()),
+      safeCount(() => ChurchService.count()),
+      safeCount(() =>
+        ChurchService.count({
+          where: {
+            status: "approved",
+            starts_at: { [Op.gte]: now },
+          },
+        })
+      ),
+      safeCount(() => AccessPolicy.count()),
+      safeCount(() => AccessPolicy.count({ where: { is_enabled: true } })),
     ]);
 
     const byStatus = Object.fromEntries(ADMISSION_STATUSES.map((s) => [s, 0]));
@@ -304,22 +371,40 @@ async function buildDashboardStats(req) {
         offices: officeCount,
         students: studentCount,
         students_active: activeStudents,
+        students_boarders: studentsBoarders,
+        students_non_boarders: studentsNonBoarders,
         programmes: programmeCount,
         departments: departmentCount,
         units: unitCount,
         units_pending: pendingUnits,
         units_approved: approvedUnits,
+        units_draft: draftUnits,
         admissions_total: admissionTotal,
+        admissions_pending: admissionsPending,
+        admissions_accepted: admissionsAccepted,
         registrations: registrationTotal,
+        registrations_active: registrationsActive,
         assignments: assignmentTotal,
         assignments_published: assignmentPublished,
         exam_periods: examTotal,
+        exam_slots: examSlots,
         library_books: libraryBooks,
+        library_loans_active: libraryLoansActive,
+        library_loans_overdue: libraryLoansOverdue,
         fee_payments: feePayments,
+        fee_payments_confirmed: feePaymentsConfirmed,
+        fee_amount_confirmed: feeAmountConfirmed,
         announcements,
+        announcements_published: announcementsPublished,
+        brochures,
         timetable_entries: timetableEntries,
         church_bookings_active: churchBookings,
+        church_services: churchServices,
+        church_services_upcoming: churchServicesUpcoming,
         meals_served_today: mealServingsToday,
+        meal_cards: mealCards,
+        access_policies: accessPolicies,
+        access_policies_enabled: accessPoliciesEnabled,
         staff_in_departments: staffInDepartments,
       },
       charts: {
@@ -369,7 +454,12 @@ exports.buildDashboardStats = buildDashboardStats;
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    const payload = await buildDashboardStats(req);
+    const role = req.user?.role || "admin";
+    const programmeId = String(req.query.programme_id || "").trim() || "all";
+    const academicYear = String(req.query.academic_year || "").trim() || "all";
+    const deptKey = (getActorDepartmentIds(req.user) || []).slice().sort().join(",") || "none";
+    const key = cacheKey("dashboard", role, req.user?.id || "anon", programmeId, academicYear, deptKey);
+    const payload = await cached(key, () => buildDashboardStats(req), Number(process.env.REDIS_DASHBOARD_TTL || 45));
     return res.json({ success: true, data: payload });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

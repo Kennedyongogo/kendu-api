@@ -2,6 +2,7 @@ const http = require("http");
 const { app, appInitialized } = require("./app");
 const config = require("./config/config");
 const { testConnections } = require("./config/database");
+const { connectRedis } = require("./services/redisClient");
 const { initStaffChatSocket } = require("./realtime/staffChatSocket");
 
 const PORT = process.env.PORT || 4000;
@@ -9,6 +10,7 @@ const PORT = process.env.PORT || 4000;
 async function createServer() {
   try {
     await testConnections();
+    await connectRedis();
     await appInitialized;
 
     const server = http.createServer(app);

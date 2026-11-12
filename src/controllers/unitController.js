@@ -10,6 +10,7 @@ const {
 const { logFromRequest } = require("../middleware/auditLogger");
 const { buildLedger } = require("./accountingController");
 const { evaluateFeatureAccess } = require("../services/accessPolicyService");
+const { cached, cacheKey, cacheDelByPrefix } = require("../services/cacheService");
 const { DEPARTMENT_SCOPED_ROLES, getActorDepartmentIds } = require("../middleware/auth");
 
 function limitsToOwnDepartment(user) {
@@ -918,42 +919,59 @@ exports.listAvailableUnitsForStudent = async (req, res) => {
     }
 
     const academicYear = String(req.query.academic_year || "").trim();
-    const where = {
-      programme_id: student.programme_id,
-      year_of_study: student.year_of_study,
-      semester: student.semester,
-      status: "approved",
-      is_active: true,
-    };
-    if (academicYear) where.academic_year = academicYear;
+    const key = cacheKey(
+      "student-units",
+      student.id,
+      student.programme_id,
+      student.year_of_study,
+      student.semester,
+      academicYear || "default"
+    );
 
-    const rows = await Unit.findAll({
-      where,
-      include: unitIncludes(),
-      order: [["code", "ASC"]],
-    });
+    const payload = await cached(
+      key,
+      async () => {
+        const where = {
+          programme_id: student.programme_id,
+          year_of_study: student.year_of_study,
+          semester: student.semester,
+          status: "approved",
+          is_active: true,
+        };
+        if (academicYear) where.academic_year = academicYear;
 
-    const regs = await StudentUnitRegistration.findAll({
-      where: { student_id: student.id, status: "registered" },
-      attributes: ["unit_id"],
-    });
-    const registeredIds = new Set(regs.map((r) => r.unit_id));
+        const rows = await Unit.findAll({
+          where,
+          include: unitIncludes(),
+          order: [["code", "ASC"]],
+        });
 
-    const data = rows.map((row) => {
-      const plain = serializeUnit(row);
-      plain.is_registered = registeredIds.has(row.id);
-      return plain;
-    });
+        const regs = await StudentUnitRegistration.findAll({
+          where: { student_id: student.id, status: "registered" },
+          attributes: ["unit_id"],
+        });
+        const registeredIds = new Set(regs.map((r) => r.unit_id));
 
-    let enrollment_access = null;
-    try {
-      const ledger = await buildLedger(student.id);
-      enrollment_access = await evaluateFeatureAccess("units", ledger.summary);
-    } catch {
-      enrollment_access = null;
-    }
+        const data = rows.map((row) => {
+          const plain = serializeUnit(row);
+          plain.is_registered = registeredIds.has(row.id);
+          return plain;
+        });
 
-    return res.json({ success: true, data, meta: { enrollment_access } });
+        let enrollment_access = null;
+        try {
+          const ledger = await buildLedger(student.id);
+          enrollment_access = await evaluateFeatureAccess("units", ledger.summary);
+        } catch {
+          enrollment_access = null;
+        }
+
+        return { data, meta: { enrollment_access } };
+      },
+      Number(process.env.REDIS_STUDENT_UNITS_TTL || 30)
+    );
+
+    return res.json({ success: true, ...payload });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -994,9 +1012,14 @@ exports.listMyRegistrations = async (req, res) => {
 
 exports.registerForUnit = async (req, res) => {
   try {
-    const studentId = req.body.student_id;
+    // Students self-register; staff pass student_id to enroll on behalf of a learner.
+    const studentId =
+      req.user.role === "student" ? req.user.id : req.body.student_id || req.body.studentId;
     if (!studentId) {
       return res.status(400).json({ success: false, message: "student_id is required" });
+    }
+    if (req.user.role === "student" && String(studentId) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "You can only register yourself" });
     }
     const student = await User.findByPk(studentId);
     if (!student || student.role !== "student") {
@@ -1057,6 +1080,8 @@ exports.registerForUnit = async (req, res) => {
         registered_at: new Date(),
         dropped_at: null,
       });
+      await cacheDelByPrefix(cacheKey("student-units", student.id));
+      await cacheDelByPrefix(cacheKey("dashboard"));
       return res.json({ success: true, data: existing, message: "Re-registered for unit" });
     }
 
@@ -1073,6 +1098,9 @@ exports.registerForUnit = async (req, res) => {
       resource_id: row.id,
       description: `Student registered for unit "${unit.code}"`,
     });
+
+    await cacheDelByPrefix(cacheKey("student-units", student.id));
+    await cacheDelByPrefix(cacheKey("dashboard"));
 
     return res.status(201).json({ success: true, data: row, message: "Registered for unit" });
   } catch (error) {

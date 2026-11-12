@@ -66,6 +66,11 @@ if (!fs.existsSync(brochuresUploadPath)) {
 }
 app.use("/uploads/brochures", express.static(brochuresUploadPath));
 
+const assignmentsUploadPath = path.join(__dirname, "..", "uploads", "assignments");
+if (!fs.existsSync(assignmentsUploadPath)) {
+  fs.mkdirSync(assignmentsUploadPath, { recursive: true });
+}
+
 const announcementsUploadPath = path.join(__dirname, "..", "uploads", "announcements");
 if (!fs.existsSync(announcementsUploadPath)) {
   fs.mkdirSync(announcementsUploadPath, { recursive: true });
@@ -145,10 +150,11 @@ app.use("/api/library", require("./routes/libraryRoutes"));
 app.use("/api/attendance", require("./routes/attendanceRoutes"));
 app.use("/api/church", require("./routes/churchRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
-// Assignments (lecturer write; leadership / exams / students read)
+// Assignments (admin+lecturer write; leadership/hod/exams read; students download docs)
 // GET /api/assignments/me
 // GET /api/assignments/summary
 // GET/POST /api/assignments
+// GET /api/assignments/:id/document
 // GET/PUT/DELETE /api/assignments/:id
 app.use("/api/assignments", require("./routes/assignmentRoutes"));
 

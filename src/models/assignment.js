@@ -65,6 +65,23 @@ module.exports = (sequelize) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      document_filename: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+        comment: "Stored filename under uploads/assignments",
+      },
+      document_original_name: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
+      document_mime_type: {
+        type: DataTypes.STRING(120),
+        allowNull: true,
+      },
+      document_size: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
       created_by: {
         type: DataTypes.UUID,
         allowNull: false,

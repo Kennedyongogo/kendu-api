@@ -1,3 +1,5 @@
+const path = require("path");
+const fs = require("fs");
 const { Op } = require("sequelize");
 const {
   Assignment,
@@ -7,8 +9,14 @@ const {
   User,
   ProgrammeDepartment,
 } = require("../models");
-const { DEPARTMENT_SCOPED_ROLES, getActorDepartmentIds } = require("../middleware/auth");
+const {
+  DEPARTMENT_SCOPED_ROLES,
+  READ_ASSIGNMENT_ROLES,
+  getActorDepartmentIds,
+} = require("../middleware/auth");
 const { logFromRequest } = require("../middleware/auditLogger");
+
+const ASSIGNMENTS_UPLOAD_DIR = path.join(__dirname, "..", "..", "uploads", "assignments");
 
 function actorOwnsDepartment(user, departmentId) {
   if (!departmentId) return false;
@@ -63,8 +71,51 @@ function assignmentIncludes() {
   ];
 }
 
+function unlinkAssignmentDocument(filename) {
+  if (!filename || /^https?:\/\//i.test(filename)) return;
+  const filePath = path.join(ASSIGNMENTS_UPLOAD_DIR, filename);
+  fs.unlink(filePath, () => {});
+}
+
+function applyUploadedDocument(patch, file) {
+  if (!file) return;
+  patch.document_filename = file.filename;
+  patch.document_original_name = file.originalname || file.filename;
+  patch.document_mime_type = file.mimetype || null;
+  patch.document_size = Number.isFinite(file.size) ? file.size : null;
+}
+
+function clearDocumentFields(patch) {
+  patch.document_filename = null;
+  patch.document_original_name = null;
+  patch.document_mime_type = null;
+  patch.document_size = null;
+}
+
 function serialize(row) {
-  return row.get ? row.get({ plain: true }) : row;
+  const plain = row.get ? row.get({ plain: true }) : { ...row };
+  plain.has_document = Boolean(plain.document_filename);
+  plain.document_url = plain.document_filename
+    ? `/api/assignments/${plain.id}/document`
+    : null;
+  return plain;
+}
+
+function studentCanAccessAssignment(user, row) {
+  if (user?.role !== "student") return false;
+  if (!row?.is_published) return false;
+  if (!user.programme_id || row.programme_id !== user.programme_id) return false;
+  if (user.year_of_study == null || row.year_of_study !== user.year_of_study) return false;
+  if (user.semester == null || row.semester !== user.semester) return false;
+  return true;
+}
+
+function staffCanReadAssignment(user, row) {
+  if (!user?.role || !READ_ASSIGNMENT_ROLES.includes(user.role)) return false;
+  if (limitsToOwnDepartment(user) && !actorOwnsDepartment(user, row.department_id)) {
+    return false;
+  }
+  return true;
 }
 
 async function assertProgrammeLinked(programmeId, departmentId) {
@@ -229,16 +280,20 @@ exports.listMyAssignments = async (req, res) => {
         message: "This endpoint is for students only",
       });
     }
-    if (!req.user.programme_id) {
+    if (
+      !req.user.programme_id ||
+      req.user.year_of_study == null ||
+      req.user.semester == null
+    ) {
       return res.json({ success: true, data: [] });
     }
 
     const where = {
       is_published: true,
       programme_id: req.user.programme_id,
+      year_of_study: req.user.year_of_study,
+      semester: req.user.semester,
     };
-    if (req.user.year_of_study != null) where.year_of_study = req.user.year_of_study;
-    if (req.user.semester != null) where.semester = req.user.semester;
 
     const rows = await Assignment.findAll({
       where,
@@ -288,6 +343,27 @@ exports.createAssignment = async (req, res) => {
     }
 
     const programme_id = toNullableString(req.body.programme_id);
+    if (!programme_id) {
+      return res.status(400).json({
+        success: false,
+        message: "programme_id is required so students can be targeted by programme",
+      });
+    }
+    const year_of_study = toInt(req.body.year_of_study);
+    const semester = toInt(req.body.semester);
+    if (year_of_study == null || year_of_study < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "year_of_study is required (from the programme duration)",
+      });
+    }
+    if (semester == null || semester < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "semester is required",
+      });
+    }
+
     const unit_id = toNullableString(req.body.unit_id);
     const linked = await assertProgrammeLinked(programme_id, dept.department_id);
     if (!linked) {
@@ -309,7 +385,7 @@ exports.createAssignment = async (req, res) => {
     }
 
     const is_published = toBool(req.body.is_published, false);
-    const row = await Assignment.create({
+    const createPayload = {
       title,
       description: toNullableString(req.body.description),
       instructions: toNullableString(req.body.instructions),
@@ -317,14 +393,17 @@ exports.createAssignment = async (req, res) => {
       programme_id,
       unit_id,
       academic_year,
-      year_of_study: toInt(req.body.year_of_study),
-      semester: toInt(req.body.semester),
+      year_of_study,
+      semester,
       due_at: toDate(req.body.due_at),
       is_published,
       published_at: is_published ? new Date() : null,
       created_by: req.user.id,
       updated_by: req.user.id,
-    });
+    };
+    applyUploadedDocument(createPayload, req.file);
+
+    const row = await Assignment.create(createPayload);
 
     await logFromRequest(req, {
       action: "create",
@@ -368,18 +447,12 @@ exports.updateAssignment = async (req, res) => {
       }
       patch.academic_year = academic_year;
     }
-    if (req.body.year_of_study !== undefined) {
-      patch.year_of_study = toInt(req.body.year_of_study);
-    }
-    if (req.body.semester !== undefined) {
-      patch.semester = toInt(req.body.semester);
-    }
     if (req.body.due_at !== undefined) {
       patch.due_at = toDate(req.body.due_at);
     }
 
     let department_id = row.department_id;
-    if (req.body.department_id !== undefined && isAdmin(req.user)) {
+    if (req.body.department_id !== undefined) {
       const dept = await resolveDepartmentId(req.user, req.body.department_id);
       if (dept.error) {
         return res.status(400).json({ success: false, message: dept.error });
@@ -390,6 +463,12 @@ exports.updateAssignment = async (req, res) => {
 
     if (req.body.programme_id !== undefined) {
       const programme_id = toNullableString(req.body.programme_id);
+      if (!programme_id) {
+        return res.status(400).json({
+          success: false,
+          message: "programme_id is required so students can be targeted by programme",
+        });
+      }
       const linked = await assertProgrammeLinked(programme_id, department_id);
       if (!linked) {
         return res.status(400).json({
@@ -398,6 +477,28 @@ exports.updateAssignment = async (req, res) => {
         });
       }
       patch.programme_id = programme_id;
+    }
+
+    if (req.body.year_of_study !== undefined) {
+      const year_of_study = toInt(req.body.year_of_study);
+      if (year_of_study == null || year_of_study < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "year_of_study is required (from the programme duration)",
+        });
+      }
+      patch.year_of_study = year_of_study;
+    }
+
+    if (req.body.semester !== undefined) {
+      const semester = toInt(req.body.semester);
+      if (semester == null || semester < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "semester is required",
+        });
+      }
+      patch.semester = semester;
     }
 
     if (req.body.unit_id !== undefined) {
@@ -422,8 +523,35 @@ exports.updateAssignment = async (req, res) => {
       if (!is_published) patch.published_at = null;
     }
 
+    const nextProgrammeId =
+      patch.programme_id !== undefined ? patch.programme_id : row.programme_id;
+    const nextYear =
+      patch.year_of_study !== undefined ? patch.year_of_study : row.year_of_study;
+    const nextSemester = patch.semester !== undefined ? patch.semester : row.semester;
+    const willPublish =
+      patch.is_published !== undefined ? patch.is_published : row.is_published;
+    if (willPublish && (!nextProgrammeId || nextYear == null || nextSemester == null)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Published assignments need programme, year of study, and semester so the right students see them",
+      });
+    }
+
+    const removeDocument = toBool(req.body.remove_document, false);
+    const previousFilename = row.document_filename;
+    if (req.file) {
+      applyUploadedDocument(patch, req.file);
+    } else if (removeDocument) {
+      clearDocumentFields(patch);
+    }
+
     patch.updated_by = req.user.id;
     await row.update(patch);
+
+    if ((req.file || removeDocument) && previousFilename && previousFilename !== row.document_filename) {
+      unlinkAssignmentDocument(previousFilename);
+    }
 
     await logFromRequest(req, {
       action: "update",
@@ -449,7 +577,9 @@ exports.deleteAssignment = async (req, res) => {
     }
 
     const title = row.title;
+    const filename = row.document_filename;
     await row.destroy();
+    unlinkAssignmentDocument(filename);
 
     await logFromRequest(req, {
       action: "delete",
@@ -459,6 +589,46 @@ exports.deleteAssignment = async (req, res) => {
     });
 
     return res.json({ success: true, message: "Assignment deleted" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/** Staff (read roles) or matching students download the assignment document. */
+exports.serveAssignmentDocument = async (req, res) => {
+  try {
+    const row = await Assignment.findByPk(req.params.id);
+    if (!row || !row.document_filename) {
+      return res.status(404).json({ success: false, message: "Document not found" });
+    }
+
+    const allowed =
+      studentCanAccessAssignment(req.user, row) || staffCanReadAssignment(req.user, row);
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    if (/^https?:\/\//i.test(row.document_filename)) {
+      return res.redirect(row.document_filename);
+    }
+
+    const filePath = path.join(ASSIGNMENTS_UPLOAD_DIR, row.document_filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: "File missing on server" });
+    }
+
+    const downloadName = row.document_original_name || row.document_filename;
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${String(downloadName).replace(/"/g, "")}"`
+    );
+    if (row.document_mime_type) {
+      res.type(row.document_mime_type);
+    } else if (/\.pdf$/i.test(row.document_filename || "")) {
+      res.type("application/pdf");
+    }
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.sendFile(filePath);
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

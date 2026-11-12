@@ -35,7 +35,7 @@ const sequelize = new Sequelize(
     dialectOptions: isProduction
       ? {
           // PgBouncer specific settings for production
-          application_name: "construction_management_api",
+          application_name: "kendu_api",
           // Connection pooling optimizations
           keepAlive: true,
           keepAliveInitialDelayMillis: 10000,
