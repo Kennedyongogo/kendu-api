@@ -1,4 +1,5 @@
-FROM node:lts-slim
+# Pin Node 20 — node:lts (24+) breaks jsonwebtoken/jwa (buffer-equal-constant-time).
+FROM node:20-slim
 
 WORKDIR /usr/src/app
 
@@ -55,5 +56,5 @@ COPY . ./
 
 EXPOSE 4000
 
-# Use PM2 to run the app in production mode
-CMD ["pm2-runtime", "src/server.js", "-i", "max"]
+# Cap workers — "-i max" on a busy VPS multiplies RAM use and crash loops.
+CMD ["pm2-runtime", "src/server.js", "-i", "2"]
