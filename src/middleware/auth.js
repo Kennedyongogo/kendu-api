@@ -140,7 +140,7 @@ const WRITE_UNIT_ROLES = [
   "examinations",
   "dean",
 ];
-const CHURCH_READ_ROLES = [...ADMIN_WRITE_ROLES, "dean", ...LEADERSHIP_ROLES];
+const CHURCH_READ_ROLES = [...ADMIN_WRITE_ROLES, "dean", ...LEADERSHIP_ROLES, "hod"];
 const CHURCH_WRITE_ROLES = [...ADMIN_WRITE_ROLES, "dean"];
 const MEAL_ADMIN_ROLES = ["admin", "dean", "catering"];
 const ANNOUNCEMENT_READ_ROLES = PORTAL_ROLES;
@@ -245,9 +245,18 @@ exports.authenticateUser = async (req, res, next) => {
     }
 
     if (!user.is_active) {
-      return res.status(403).json({
+      return res.status(401).json({
         success: false,
+        code: "ACCOUNT_INACTIVE",
         message: "Access denied, invalid or inactive user",
+      });
+    }
+
+    if (user.role === "student" && String(user.student_status || "").toLowerCase() === "suspended") {
+      return res.status(401).json({
+        success: false,
+        code: "STUDENT_SUSPENDED",
+        message: "Your student account is suspended. Sign-in is disabled until the school lifts the suspension.",
       });
     }
 

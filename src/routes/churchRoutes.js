@@ -24,6 +24,7 @@ router.get("/services/:id/seat-map", ...book, c.getSeatMap);
 router.post("/services/:id/bookings", ...book, c.bookSeat);
 router.delete("/bookings/:id", ...book, c.cancelBooking);
 
+router.get("/summary/weekly", ...view, c.weeklyAttendanceSummary);
 router.get("/services", ...view, c.listServices);
 router.post("/services", ...manage, c.createService);
 router.get("/services/:id", ...view, c.getService);

@@ -889,3 +889,125 @@ exports.cancelBooking = async (req, res) => {
     return sendError(res, error);
   }
 };
+
+/** Weekly church attendance summary for leadership / dean. */
+exports.weeklyAttendanceSummary = async (req, res) => {
+  try {
+    const to = req.query.to ? new Date(req.query.to) : new Date();
+    const from = req.query.from
+      ? new Date(req.query.from)
+      : new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw httpError(400, "Invalid from/to date.");
+    }
+
+    const services = await ChurchService.findAll({
+      where: {
+        status: "approved",
+        starts_at: { [Op.between]: [from, to] },
+      },
+      attributes: ["id", "title", "service_type", "starts_at", "ends_at", "seat_count"],
+      order: [["starts_at", "ASC"]],
+    });
+
+    const serviceIds = services.map((s) => s.id);
+    const bookings = serviceIds.length
+      ? await ChurchBooking.findAll({
+          where: {
+            service_id: { [Op.in]: serviceIds },
+            status: "active",
+          },
+          include: [
+            {
+              model: User,
+              as: "user",
+              attributes: [
+                "id",
+                "full_name",
+                "admission_number",
+                "programme_id",
+                "year_of_study",
+                "semester",
+                "student_status",
+              ],
+            },
+          ],
+        })
+      : [];
+
+    const byService = {};
+    for (const service of services) {
+      byService[service.id] = {
+        service_id: service.id,
+        title: service.title,
+        service_type: service.service_type,
+        starts_at: service.starts_at,
+        seat_count: service.seat_count,
+        booked: 0,
+        present: 0,
+        absent: 0,
+        unmarked: 0,
+      };
+    }
+
+    const studentMap = new Map();
+    for (const booking of bookings) {
+      const bucket = byService[booking.service_id];
+      if (!bucket) continue;
+      bucket.booked += 1;
+      if (booking.attendance === "present") bucket.present += 1;
+      else if (booking.attendance === "absent") bucket.absent += 1;
+      else bucket.unmarked += 1;
+
+      const student = booking.user;
+      if (!student) continue;
+      if (!studentMap.has(student.id)) {
+        studentMap.set(student.id, {
+          user_id: student.id,
+          full_name: student.full_name,
+          admission_number: student.admission_number,
+          year_of_study: student.year_of_study,
+          semester: student.semester,
+          student_status: student.student_status || "active",
+          services_booked: 0,
+          present: 0,
+          absent: 0,
+          unmarked: 0,
+        });
+      }
+      const row = studentMap.get(student.id);
+      row.services_booked += 1;
+      if (booking.attendance === "present") row.present += 1;
+      else if (booking.attendance === "absent") row.absent += 1;
+      else row.unmarked += 1;
+    }
+
+    const serviceRows = Object.values(byService);
+    const totals = serviceRows.reduce(
+      (acc, row) => {
+        acc.services += 1;
+        acc.booked += row.booked;
+        acc.present += row.present;
+        acc.absent += row.absent;
+        acc.unmarked += row.unmarked;
+        return acc;
+      },
+      { services: 0, booked: 0, present: 0, absent: 0, unmarked: 0 }
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        from,
+        to,
+        totals,
+        services: serviceRows,
+        students: [...studentMap.values()].sort((a, b) =>
+          String(a.full_name || "").localeCompare(String(b.full_name || ""))
+        ),
+      },
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+};

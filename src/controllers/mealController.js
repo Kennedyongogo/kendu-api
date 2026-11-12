@@ -65,7 +65,24 @@ const STUDENT_ATTRS = [
   "programme_id",
   "role",
   "is_active",
+  "boarding_status",
+  "student_status",
 ];
+
+function isBoarder(user) {
+  const status = String(user?.boarding_status || "").trim().toLowerCase();
+  return status === "boarder";
+}
+
+function assertBoarderForMeals(user) {
+  if (isBoarder(user)) return;
+  const err = meals.httpError(
+    403,
+    "Meal cards are for boarding students only. Day scholars do not receive a meal card."
+  );
+  err.code = "MEALS_BOARDERS_ONLY";
+  throw err;
+}
 
 const programmeInclude = {
   model: Programme,
@@ -142,6 +159,8 @@ exports.getMyMealCard = async (req, res) => {
       return res.status(403).json({ success: false, message: "Students only" });
     }
 
+    assertBoarderForMeals(req.user);
+
     const [{ access, summary }, card, allowance, activeCard, served] = await Promise.all([
       evaluateMealAccess(req.user.id),
       loadStudentCard(req.user.id),
@@ -155,6 +174,7 @@ exports.getMyMealCard = async (req, res) => {
       data: {
         access,
         summary,
+        boarder: true,
         card: access.eligible ? card : null,
         locked_card: card,
         allowance,
@@ -175,6 +195,8 @@ exports.downloadMyMealCardPdf = async (req, res) => {
     if (req.user.role !== "student") {
       return res.status(403).json({ success: false, message: "Students only" });
     }
+
+    assertBoarderForMeals(req.user);
 
     const { access } = await evaluateMealAccess(req.user.id);
     if (!access.eligible) {
@@ -288,6 +310,19 @@ exports.scanMealCard = async (req, res) => {
 
     if (!student.is_active) {
       return reply("student_inactive", false, "Student account is inactive.", { student: studentData });
+    }
+
+    if (String(student.student_status || "").toLowerCase() === "suspended") {
+      return reply("student_suspended", false, "Student account is suspended.", { student: studentData });
+    }
+
+    if (!isBoarder(student)) {
+      return reply(
+        "not_boarder",
+        false,
+        "Meal service is for boarding students only.",
+        { student: studentData }
+      );
     }
 
     const today = await meals.todayServedFlags(student.id, now.date);
@@ -471,6 +506,12 @@ exports.markManual = async (req, res) => {
 
     const student = await findStudentForMeals(req.body);
     if (!student.is_active) throw meals.httpError(400, "Student account is inactive.");
+    if (String(student.student_status || "").toLowerCase() === "suspended") {
+      throw meals.httpError(400, "Student account is suspended.");
+    }
+    if (!isBoarder(student)) {
+      throw meals.httpError(403, "Meal service is for boarding students only.");
+    }
 
     if (req.user.role === CATERING_ROLE) {
       const feeAccess = await meals.mealFeeAccess(student.id);

@@ -88,6 +88,14 @@ module.exports = (sequelize) => {
           isIn: [["boarder", "non_boarder"]],
         },
       },
+      /** Academic standing for students (separate from account is_active login flag). */
+      student_status: {
+        type: DataTypes.STRING(30),
+        allowNull: true,
+        validate: {
+          isIn: [["active", "suspended", "awaiting_semester"]],
+        },
+      },
       profile_image: {
         type: DataTypes.STRING(255),
         allowNull: true,

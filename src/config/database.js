@@ -73,8 +73,11 @@ const testConnections = async () => {
       } connection established successfully.`
     );
 
-    await directSequelize.authenticate();
-    console.log("✅ Direct database connection established successfully.");
+    // Dev uses the same direct pool for both — no second remote ping.
+    if (isProduction) {
+      await directSequelize.authenticate();
+      console.log("✅ Direct database connection established successfully.");
+    }
   } catch (error) {
     console.error("❌ Database connection error:", error);
     throw error;

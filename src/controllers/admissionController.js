@@ -5,6 +5,11 @@ const { Op, fn, col, where: sqlWhere } = require("sequelize");
 const { AdmissionApplication, Programme, User } = require("../models");
 const { logFromRequest } = require("../middleware/auditLogger");
 const { meetsMinimumKcseGrade, parseKcseGrade } = require("../utils/kcseGrade");
+const {
+  getAdmissionWindowStatus,
+  updateAdmissionWindow,
+  assertAdmissionsOpen,
+} = require("../services/admissionWindowService");
 
 const STATUSES = ["pending", "under_review", "accepted", "rejected"];
 const DOCUMENT_FIELDS = [
@@ -155,6 +160,7 @@ async function ensureStudentFromAcceptedApplication(application, admissionNumber
     position: null,
     is_public: false,
     is_active: true,
+    student_status: "active",
     profile_image: null,
   });
 
@@ -316,8 +322,41 @@ exports.getApplicationById = async (req, res) => {
   }
 };
 
+exports.getAdmissionWindow = async (_req, res) => {
+  try {
+    const data = await getAdmissionWindowStatus();
+    return res.json({ success: true, data });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.updateAdmissionWindowSettings = async (req, res) => {
+  try {
+    const data = await updateAdmissionWindow(req.body || {}, req.user?.id || null);
+
+    await logFromRequest(req, {
+      action: "update",
+      resource_type: "admission_setting",
+      resource_id: data.id || null,
+      description: data.is_open
+        ? "Opened public admissions apply window"
+        : "Updated public admissions apply window",
+      new_values: data,
+      status: "success",
+    });
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    const status = error.status || 500;
+    return res.status(status).json({ success: false, message: error.message });
+  }
+};
+
 exports.createApplication = async (req, res) => {
   try {
+    await assertAdmissionsOpen();
+
     const payload = validateRequired(req.body);
 
     const programme = await Programme.findByPk(payload.programme_id);
@@ -382,7 +421,12 @@ exports.createApplication = async (req, res) => {
       if (uploaded) unlinkIfExists(uploaded);
     }
     const status = error.status || 500;
-    return res.status(status).json({ success: false, message: error.message });
+    return res.status(status).json({
+      success: false,
+      message: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.data ? { data: error.data } : {}),
+    });
   }
 };
 

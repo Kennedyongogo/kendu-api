@@ -160,6 +160,27 @@ function parseBoardingStatus(value) {
   return null;
 }
 
+const STUDENT_STATUS_VALUES = ["active", "suspended", "awaiting_semester"];
+
+function parseStudentStatus(value, fallback = null) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const s = String(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (["active", "ok", "enrolled", "current"].includes(s)) return "active";
+  if (["suspended", "suspension", "suspend"].includes(s)) return "suspended";
+  if (
+    [
+      "awaiting_semester",
+      "awaiting_new_semester",
+      "awaiting",
+      "pending_semester",
+      "between_semesters",
+    ].includes(s)
+  ) {
+    return "awaiting_semester";
+  }
+  return null;
+}
+
 async function resolveProgrammeId(value) {
   if (value === undefined || value === null || String(value).trim() === "") return null;
   const raw = String(value).trim();
@@ -1058,6 +1079,7 @@ exports.importUsersMapped = async (req, res) => {
           semester,
           gender,
           boarding_status,
+          student_status: "active",
           profile_image: null,
           is_public: false,
           position: null,
@@ -1152,10 +1174,25 @@ exports.login = async (req, res) => {
       });
       return res.status(403).json({
         success: false,
+        code: "ACCOUNT_INACTIVE",
         message:
           portalNorm === "public"
             ? "This account is inactive. Contact the school if you should have access."
             : "This account is inactive. Contact your administrator.",
+      });
+    }
+
+    if (user.role === "student" && parseStudentStatus(user.student_status) === "suspended") {
+      await auditLogin(req, {
+        user,
+        status: "failed",
+        description: "Login failed: student suspended",
+      });
+      return res.status(403).json({
+        success: false,
+        code: "STUDENT_SUSPENDED",
+        message:
+          "Your student account is suspended. You cannot sign in until the school lifts the suspension. Contact the academic office for help.",
       });
     }
 
@@ -1348,6 +1385,10 @@ exports.listUsers = async (req, res) => {
         where.role = { [Op.ne]: excludeRole };
       }
     }
+    const studentStatusFilter = parseStudentStatus(req.query.student_status);
+    if (studentStatusFilter && (where.role === "student" || roleFilter === "student")) {
+      where.student_status = studentStatusFilter;
+    }
     if (search) {
       where[Op.or] = [
         { full_name: { [Op.iLike]: `%${search}%` } },
@@ -1393,20 +1434,24 @@ exports.studentDashboardStats = async (req, res) => {
     const active = await User.count({ where: { role: "student", is_active: true } });
     const inactive = Math.max(0, total - active);
 
-    const [genderRows, boardingRows] = await Promise.all([
-      User.findAll({
-        attributes: ["gender", [fn("COUNT", col("id")), "count"]],
-        where: { role: "student" },
-        group: ["gender"],
-        raw: true,
-      }),
-      User.findAll({
-        attributes: ["boarding_status", [fn("COUNT", col("id")), "count"]],
-        where: { role: "student" },
-        group: ["boarding_status"],
-        raw: true,
-      }),
-    ]);
+    const [statusActive, statusSuspended, statusAwaiting, genderRows, boardingRows] =
+      await Promise.all([
+        User.count({ where: { role: "student", student_status: "active" } }),
+        User.count({ where: { role: "student", student_status: "suspended" } }),
+        User.count({ where: { role: "student", student_status: "awaiting_semester" } }),
+        User.findAll({
+          attributes: ["gender", [fn("COUNT", col("id")), "count"]],
+          where: { role: "student" },
+          group: ["gender"],
+          raw: true,
+        }),
+        User.findAll({
+          attributes: ["boarding_status", [fn("COUNT", col("id")), "count"]],
+          where: { role: "student" },
+          group: ["boarding_status"],
+          raw: true,
+        }),
+      ]);
 
     const genderMap = { male: 0, female: 0, unspecified: 0 };
     for (const row of genderRows) {
@@ -1430,6 +1475,11 @@ exports.studentDashboardStats = async (req, res) => {
         total,
         active,
         inactive,
+        student_status: [
+          { key: "active", label: "Active", count: statusActive },
+          { key: "suspended", label: "Suspended", count: statusSuspended },
+          { key: "awaiting_semester", label: "Awaiting semester", count: statusAwaiting },
+        ],
         gender: [
           { key: "male", label: "Male", count: genderMap.male },
           { key: "female", label: "Female", count: genderMap.female },
@@ -1517,6 +1567,7 @@ exports.createUser = async (req, res) => {
       department_id: departmentIdRaw,
       gender: genderRaw,
       boarding_status: boardingRaw,
+      student_status: studentStatusRaw,
     } = req.body;
     const normalizedRole = normalizeRole(role);
 
@@ -1565,6 +1616,7 @@ exports.createUser = async (req, res) => {
     let department_ids = [];
     let gender = null;
     let boarding_status = null;
+    let student_status = null;
 
     if (normalizedRole === "student") {
       programme_id = await resolveProgrammeId(programmeIdRaw || programme);
@@ -1572,6 +1624,13 @@ exports.createUser = async (req, res) => {
       semester = parseSemester(semesterRaw);
       gender = parseGender(genderRaw);
       boarding_status = parseBoardingStatus(boardingRaw);
+      student_status = parseStudentStatus(studentStatusRaw, "active");
+      if (!student_status) {
+        return res.status(400).json({
+          success: false,
+          message: `student_status must be one of: ${STUDENT_STATUS_VALUES.join(", ")}`,
+        });
+      }
       const enrolErr = studentEnrolmentError(normalizedRole, {
         programme_id,
         year_of_study,
@@ -1647,6 +1706,7 @@ exports.createUser = async (req, res) => {
       semester: normalizedRole === "student" ? semester : null,
       gender: normalizedRole === "student" ? gender : null,
       boarding_status: normalizedRole === "student" ? boarding_status : null,
+      student_status: normalizedRole === "student" ? student_status : null,
       profile_image: imageFilename,
       is_public:
         normalizedRole === "student"
@@ -1717,6 +1777,7 @@ exports.updateUser = async (req, res) => {
       "semester",
       "gender",
       "boarding_status",
+      "student_status",
     ];
     const patch = {};
     for (const key of allowed) {
@@ -1753,6 +1814,27 @@ exports.updateUser = async (req, res) => {
     }
     if (patch.boarding_status !== undefined) {
       patch.boarding_status = parseBoardingStatus(patch.boarding_status);
+    }
+    if (patch.student_status !== undefined) {
+      const parsedStatus = parseStudentStatus(patch.student_status);
+      if (!parsedStatus) {
+        return res.status(400).json({
+          success: false,
+          message: `student_status must be one of: ${STUDENT_STATUS_VALUES.join(", ")}`,
+        });
+      }
+      patch.student_status = parsedStatus;
+      // Suspended students cannot log in — keep account login flag aligned.
+      if (user.role === "student" || patch.role === "student") {
+        if (parsedStatus === "suspended") patch.is_active = false;
+        else if (
+          parsedStatus === "active" &&
+          parseStudentStatus(user.student_status) === "suspended" &&
+          req.body.is_active === undefined
+        ) {
+          patch.is_active = true;
+        }
+      }
     }
 
     if (req.body.role !== undefined) {
@@ -1795,11 +1877,15 @@ exports.updateUser = async (req, res) => {
       patch.semester = null;
       patch.gender = null;
       patch.boarding_status = null;
+      patch.student_status = null;
     } else {
       patch.department_id = null;
       nextDepartmentIds = [];
       if (patch.admission_number !== undefined) {
         patch.admission_number = normalizeAdmissionNumber(patch.admission_number) || null;
+      }
+      if (patch.student_status === undefined && !user.student_status) {
+        patch.student_status = "active";
       }
     }
 

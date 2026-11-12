@@ -9,6 +9,8 @@ const {
   updateApplication,
   updateApplicationStatus,
   deleteApplication,
+  getAdmissionWindow,
+  updateAdmissionWindowSettings,
 } = require("../controllers/admissionController");
 const {
   authenticateUser,
@@ -56,6 +58,10 @@ const documentUpload = upload.fields([
 
 const canRead = [authenticateUser, authorizeRoles(READ_ADMISSION_ROLES)];
 const canWrite = [authenticateUser, authorizeRoles(WRITE_ADMISSION_ROLES)];
+
+// Public: whether Apply is currently open (must be before /:id)
+router.get("/window", getAdmissionWindow);
+router.put("/window", ...canWrite, updateAdmissionWindowSettings);
 
 // Public: submit admission application
 router.post("/", documentUpload, createApplication);

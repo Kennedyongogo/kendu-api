@@ -11,6 +11,7 @@ const ProgrammeModule = require("./programmeModule")(sequelize);
 const ProgrammeFee = require("./programmeFee")(sequelize);
 const ProgrammeSubjectRequirement = require("./programmeSubjectRequirement")(sequelize);
 const AdmissionApplication = require("./admissionApplication")(sequelize);
+const AdmissionSetting = require("./admissionSetting")(sequelize);
 const Music = require("./music")(sequelize);
 const Brochure = require("./brochure")(sequelize);
 const StudentFeeCharge = require("./studentFeeCharge")(sequelize);
@@ -63,6 +64,7 @@ const models = {
   ProgrammeFee,
   ProgrammeSubjectRequirement,
   AdmissionApplication,
+  AdmissionSetting,
   Music,
   Brochure,
   StudentFeeCharge,
@@ -108,11 +110,30 @@ const isConnectionReset = (error) => {
   return /ECONNRESET|Connection terminated|Connection refused|severed|timeout/i.test(msg);
 };
 
+/**
+ * DB_SYNC=false → skip Sequelize table sync entirely (fast local boot against remote DB).
+ * DB_SYNC_ALTER=true → also run alter (slow; use only when adding columns).
+ */
+const syncEnabled = !["false", "0", "off"].includes(
+  String(process.env.DB_SYNC ?? "true").trim().toLowerCase()
+);
+const defaultAlter =
+  String(process.env.DB_SYNC_ALTER || "").toLowerCase() === "true" ||
+  process.env.DB_SYNC_ALTER === "1";
+const syncVerbose =
+  process.env.DB_SYNC_VERBOSE === "1" ||
+  process.env.DB_SYNC_VERBOSE === "true" ||
+  syncEnabled; // always show progress when syncing so hangs are visible
+
 /** Sync one model; on dropped DB connections, reconnect and retry without alter. */
-const safeSync = async (model, { alter = true } = {}) => {
+const safeSync = async (model, { alter = defaultAlter } = {}) => {
+  const started = Date.now();
+  if (syncVerbose) process.stdout.write(`   … ${model.name} `);
   try {
     await model.sync({ force: false, alter });
+    if (syncVerbose) console.log(`✓ ${Date.now() - started}ms`);
   } catch (error) {
+    if (syncVerbose) console.log(`✗ ${Date.now() - started}ms`);
     if (!isConnectionReset(error)) throw error;
     console.warn(
       `⚠️ Sync connection reset for ${model.name}; reconnecting and retrying without alter...`
@@ -178,6 +199,21 @@ const repairUsersDemographicColumns = async () => {
         ) THEN
           ALTER TABLE users ADD COLUMN boarding_status VARCHAR(20) NULL;
         END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'student_status'
+        ) THEN
+          ALTER TABLE users ADD COLUMN student_status VARCHAR(30) NULL;
+        END IF;
+
+        UPDATE users
+        SET student_status = 'active'
+        WHERE role = 'student'
+          AND (student_status IS NULL OR student_status = '');
       END
       $fix$;
     `);
@@ -262,15 +298,27 @@ const ensureUserRoleValues = async () => {
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
-    console.log("🔄 Creating/updating tables...");
+    const bootStarted = Date.now();
+
+    // Always apply cheap column repairs (e.g. student_status) — these are local SQL, not full sync.
+    await repairUsersDemographicColumns();
+
+    if (!syncEnabled) {
+      console.log(
+        `⏭️  Skipping Sequelize table sync (DB_SYNC=false) — using existing remote schema (${Date.now() - bootStarted}ms)`
+      );
+      return;
+    }
+
+    console.log(
+      `🔄 Creating/updating tables... (alter=${defaultAlter ? "on" : "off"}; set DB_SYNC=false to skip)`
+    );
 
     console.log("📋 Syncing parent tables...");
     await safeSync(Department);
-    await repairUsersDemographicColumns();
     await ensureUserRoleValues();
     await safeSync(User);
     await safeSync(UserDepartment);
-    // alter: true so new programme columns are applied to existing tables
     await safeSync(Programme);
     await safeSync(ProgrammeDepartment);
 
@@ -318,6 +366,8 @@ const initializeModels = async () => {
     await safeSync(ProgrammeFee);
     await safeSync(ProgrammeSubjectRequirement);
     await safeSync(AdmissionApplication);
+    // alter:false — Sequelize alter on key (default + unique) breaks on Postgres
+    await safeSync(AdmissionSetting, { alter: false });
     await safeSync(Music);
     await safeSync(Brochure);
     await safeSync(StudentFeeCharge);
@@ -359,7 +409,7 @@ const initializeModels = async () => {
     await safeSync(Notification);
     await safeSync(Assignment);
 
-    console.log("✅ All models synced successfully");
+    console.log(`✅ All models synced successfully (${Date.now() - bootStarted}ms)`);
   } catch (error) {
     console.error("❌ Error syncing models:", error);
     console.error("❌ Error details:", {

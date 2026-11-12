@@ -14,6 +14,10 @@ function getRedis() {
   if (!redisEnabled()) return null;
   if (client) return client;
 
+  const isLocal =
+    process.env.NODE_ENV !== "production" &&
+    ["127.0.0.1", "localhost"].includes(String(config.redis.host || "127.0.0.1"));
+
   client = new Redis({
     host: config.redis.host || "127.0.0.1",
     port: Number(config.redis.port || 6379),
@@ -22,8 +26,12 @@ function getRedis() {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
-    connectTimeout: Number(config.redis.connectTimeout || 10000),
+    // Local Redis missing should fail fast; don't burn ~10s on connectTimeout.
+    connectTimeout: Number(
+      config.redis.connectTimeout || (isLocal ? 1500 : 10000)
+    ),
     commandTimeout: Number(config.redis.commandTimeout || 5000),
+    retryStrategy: () => null,
   });
 
   client.on("error", (err) => {
